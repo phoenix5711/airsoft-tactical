@@ -1,4 +1,333 @@
-<!DOCTYPE html>
+        function showConfig() {
+            document.getElementById('teamSetup').style.display = 'block';
+            document.getElementById('controls').style.display = 'none';
+            document.getElementById('controlsCenter').style.display = 'none';
+        }
+        
+        function switchLayer(layerType) {
+            // Supprimer toutes les couches
+            Object.keys(currentLayers).forEach(key => {
+                map.removeLayer(currentLayers[key]);
+            });
+            
+            // Ajouter la nouvelle couche
+            map.addLayer(currentLayers[layerType]);
+            activeLayer = layerType;
+            
+            // Mettre à jour l'interface
+            document.querySelectorAll('.layer-btn').forEach(btn => btn.classList.remove('active'));
+            document.getElementById(layerType + 'Btn').classList.add('active');
+            
+            showNotification(`Carte: ${layerType.toUpperCase()}`);
+        }
+        
+        function toggleDrawMode() {
+            if (enemyMode) toggleEnemyMode(); // Désactiver ennemi
+            
+            drawMode = !drawMode;
+            const btn = document.getElementById('drawBtn');
+            const panel = document.getElementById('drawingPanel');
+            
+            if (drawMode) {
+                btn.classList.add('active');
+                panel.classList.add('active');
+                map.getContainer().style.cursor = 'crosshair';
+                showNotification('Mode dessin - Sélectionnez un outil');
+            } else {
+                btn.classList.remove('active');
+                panel.classList.remove('active');
+                map.getContainer().style.cursor = '';
+                cancelCurrentDrawing();
+            }
+        }
+        
+        function setDrawMode(mode) {
+            currentDrawMode = mode;
+            cancelCurrentDrawing();
+            
+            document.querySelectorAll('#drawingPanel .btn').forEach(btn => btn.classList.remove('active'));
+            document.getElementById(mode + 'Btn').classList.add('active');
+            
+            showNotification(`Outil: ${mode.toUpperCase()}`);
+        }
+        
+        function setDrawColor(color) {
+            currentDrawColor = color;
+            
+            document.querySelectorAll('.color-option').forEach(option => option.classList.remove('active'));
+            event.target.classList.add('active');
+        }
+        
+        function handleDrawClick(e) {
+            if (!drawMode) return;
+            
+            switch (currentDrawMode) {
+                case 'polygon':
+                    startPolygonDrawing(e.latlng);
+                    break;
+                case 'rectangle':
+                    startRectangleDrawing(e.latlng);
+                    break;
+                case 'circle':
+                    startCircleDrawing(e.latlng);
+                    break;
+            }
+        }
+        
+        function startPolygonDrawing(latlng) {
+            if (!currentDrawing) {
+                currentDrawing = { type: 'polygon', points: [latlng], tempMarkers: [] };
+                isDrawing = true;
+                showNotification('Cliquez pour ajouter des points, double-clic pour finir');
+                
+                const tempMarker = L.circleMarker(latlng, {
+                    radius: 3, color: currentDrawColor, fillOpacity: 0.8
+                }).addTo(map);
+                currentDrawing.tempMarkers.push(tempMarker);
+            } else {
+                currentDrawing.points.push(latlng);
+                const tempMarker = L.circleMarker(latlng, {
+                    radius: 3, color: currentDrawColor, fillOpacity: 0.8
+                }).addTo(map);
+                currentDrawing.tempMarkers.push(tempMarker);
+                updatePolygonPreview();
+            }
+        }
+        
+        function updatePolygonPreview() {
+            if (currentDrawing?.previewLayer) {
+                map.removeLayer(currentDrawing.previewLayer);
+            }
+            
+            if (currentDrawing && currentDrawing.points.length > 1) {
+                currentDrawing.previewLayer = L.polyline(currentDrawing.points, {
+                    color: currentDrawColor, weight: 2, dashArray: '5, 5'
+                }).addTo(map);
+            }
+        }
+        
+        function finishPolygon() {
+            if (drawMode && currentDrawing && currentDrawing.type === 'polygon' && currentDrawing.points.length >= 3) {
+                const polygon = L.polygon(currentDrawing.points, {
+                    color: currentDrawColor, weight: 3, fillOpacity: 0.3,
+                    className: 'obstacle-polygon'
+                });
+                addObstacleToMap(polygon, 'polygon');
+                cancelCurrentDrawing();
+            }
+        }
+        
+        function startRectangleDrawing(latlng) {
+            if (!currentDrawing) {
+                currentDrawing = { type: 'rectangle', startPoint: latlng };
+                isDrawing = true;
+                showNotification('Cliquez pour le coin opposé');
+            } else {
+                const bounds = L.latLngBounds([currentDrawing.startPoint, latlng]);
+                const rectangle = L.rectangle(bounds, {
+                    color: currentDrawColor, weight: 3, fillOpacity: 0.3,
+                    className: 'obstacle-polygon'
+                });
+                addObstacleToMap(rectangle, 'rectangle');
+                cancelCurrentDrawing();
+            }
+        }
+        
+        function startCircleDrawing(latlng) {
+            if (!currentDrawing) {
+                currentDrawing = { type: 'circle', center: latlng };
+                isDrawing = true;
+                showNotification('Cliquez pour définir le rayon');
+            } else {
+                const radius = currentDrawing.center.distanceTo(latlng);
+                const circle = L.circle(currentDrawing.center, {
+                    radius: radius, color: currentDrawColor, weight: 3, fillOpacity: 0.3,
+                    className: 'obstacle-polygon'
+                });
+                addObstacleToMap(circle, 'circle');
+                cancelCurrentDrawing();
+            }
+        }
+        
+        function handleDrawMouseMove(e) {
+            if (!isDrawing || !currentDrawing) return;
+            
+            if (currentDrawing.type === 'rectangle' && currentDrawing.startPoint) {
+                if (currentDrawing.previewLayer) {
+                    map.removeLayer(currentDrawing.previewLayer);
+                }
+                
+                const bounds = L.latLngBounds([currentDrawing.startPoint, e.latlng]);
+                currentDrawing.previewLayer = L.rectangle(bounds, {
+                    color: currentDrawColor, weight: 2, fillOpacity: 0.1, dashArray: '5, 5'
+                }).addTo(map);
+            } else if (currentDrawing.type === 'circle' && currentDrawing.center) {
+                if (currentDrawing.previewLayer) {
+                    map.removeLayer(currentDrawing.previewLayer);
+                }
+                
+                const radius = currentDrawing.center.distanceTo(e.latlng);
+                currentDrawing.previewLayer = L.circle(currentDrawing.center, {
+                    radius: radius, color: currentDrawColor, weight: 2, fillOpacity: 0.1, dashArray: '5, 5'
+                }).addTo(map);
+            }
+        }
+        
+        function addObstacleToMap(layer, type) {
+            const obstacleId = 'obstacle_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+            
+            // Ajouter à la carte
+            obstacleGroup.addLayer(layer);
+            layer._obstacleId = obstacleId;
+            
+            // Popup avec options
+            layer.bindPopup(`
+                <div style="text-align: center;">
+                    <b>Obstacle ${type}</b><br>
+                    <small>Par: ${playerName}</small><br>
+                    <button onclick="removeObstacle('${obstacleId}')" style="margin-top: 5px; padding: 3px 8px; background: #ff4444; color: white; border: none; border-radius: 3px; cursor: pointer;">
+                        Supprimer
+                    </button>
+                </div>
+            `);
+            
+            // Sauvegarder dans Firebase
+            if (obstacleRef) {
+                let obstacleData = {
+                    type: type,
+                    color: currentDrawColor,
+                    createdBy: playerName,
+                    timestamp: Date.now()
+                };
+                
+                if (type === 'rectangle') {
+                    obstacleData.bounds = layer.getBounds();
+                } else if (type === 'circle') {
+                    obstacleData.center = layer.getLatLng();
+                    obstacleData.radius = layer.getRadius();
+                } else if (type === 'polygon') {
+                    obstacleData.points = layer.getLatLngs()[0];
+                }
+                
+                obstacleRef.child(obstacleId).set(obstacleData);
+            }
+            
+            showNotification(`Obstacle ${type} ajouté et synchronisé`);
+        }
+        
+        function removeObstacle(obstacleId) {
+            // Supprimer de la carte
+            obstacleGroup.eachLayer(layer => {
+                if (layer._obstacleId === obstacleId) {
+                    obstacleGroup.removeLayer(layer);
+                }
+            });
+            
+            // Supprimer de Firebase
+            if (obstacleRef) {
+                obstacleRef.child(obstacleId).remove();
+            }
+            
+            showNotification('Obstacle supprimé');
+        }
+        
+        function clearAllObstacles() {
+            if (confirm('Effacer tous les obstacles de l\'équipe ?')) {
+                obstacleGroup.clearLayers();
+                if (obstacleRef) {
+                    obstacleRef.remove();
+                }
+                showNotification('Tous les obstacles effacés');
+            }
+        }
+        
+        function saveObstacles() {
+            if (!obstacleRef) {
+                showNotification('Firebase non connecté');
+                return;
+            }
+            
+            let count = 0;
+            obstacleGroup.eachLayer(() => count++);
+            
+            if (count === 0) {
+                showNotification('Aucun obstacle à sauvegarder');
+                return;
+            }
+            
+            showNotification(`${count} obstacles synchronisés`);
+        }
+        
+        function loadObstaclesFromFirebase(obstaclesData) {
+            if (!obstaclesData) return;
+            
+            // Effacer les obstacles existants
+            obstacleGroup.clearLayers();
+            
+            // Recréer les obstacles
+            Object.keys(obstaclesData).forEach(obstacleId => {
+                const obstacle = obstaclesData[obstacleId];
+                let layer;
+                
+                try {
+                    switch (obstacle.type) {
+                        case 'rectangle':
+                            layer = L.rectangle(obstacle.bounds, {
+                                color: obstacle.color || '#ff4444',
+                                weight: 3, fillOpacity: 0.3,
+                                className: 'obstacle-polygon'
+                            });
+                            break;
+                        case 'circle':
+                            layer = L.circle(obstacle.center, {
+                                radius: obstacle.radius,
+                                color: obstacle.color || '#ff4444',
+                                weight: 3, fillOpacity: 0.3,
+                                className: 'obstacle-polygon'
+                            });
+                            break;
+                        case 'polygon':
+                            layer = L.polygon(obstacle.points, {
+                                color: obstacle.color || '#ff4444',
+                                weight: 3, fillOpacity: 0.3,
+                                className: 'obstacle-polygon'
+                            });
+                            break;
+                    }
+                    
+                    if (layer) {
+                        layer._obstacleId = obstacleId;
+                        layer.bindPopup(`
+                            <div style="text-align: center;">
+                                <b>Obstacle ${obstacle.type}</b><br>
+                                <small>Par: ${obstacle.createdBy}</small><br>
+                                <button onclick="removeObstacle('${obstacleId}')" style="margin-top: 5px; padding: 3px 8px; background: #ff4444; color: white; border: none; border-radius: 3px; cursor: pointer;">
+                                    Supprimer
+                                </button>
+                            </div>
+                        `);
+                        obstacleGroup.addLayer(layer);
+                    }
+                } catch (error) {
+                    console.error('Erreur chargement obstacle:', error);
+                }
+            });
+        }
+        
+        function cancelCurrentDrawing() {
+            if (currentDrawing) {
+                // Nettoyer les éléments temporaires
+                if (currentDrawing.tempMarkers) {
+                    currentDrawing.tempMarkers.forEach(marker => map.removeLayer(marker));
+                }
+                if (currentDrawing.previewLayer) {
+                    map.removeLayer(currentDrawing.previewLayer);
+                }
+                
+                currentDrawing = null;
+                isDrawing = false;
+            }
+        }<!DOCTYPE html>
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
@@ -27,8 +356,62 @@
         }
         
         .controls {
+            position: absolute; bottom: 15px; left: 15px;
+            display: flex; flex-direction: column; gap: 8px; pointer-events: auto;
+        }
+        
+        .controls-center {
             position: absolute; bottom: 15px; left: 50%; transform: translateX(-50%);
             display: flex; gap: 8px; pointer-events: auto;
+        }
+        
+        .layer-control {
+            position: absolute; top: 90px; right: 15px;
+            background: rgba(0, 0, 0, 0.95); border: 2px solid #00ff00;
+            border-radius: 8px; padding: 8px; pointer-events: auto;
+            box-shadow: 0 0 15px rgba(0, 255, 0, 0.3);
+        }
+        
+        .layer-btn {
+            display: block; width: 70px; margin: 3px 0; padding: 6px 8px;
+            background: rgba(0, 0, 0, 0.8); border: 1px solid #00ff00;
+            color: #00ff00; border-radius: 4px; cursor: pointer; font-size: 10px;
+            text-align: center; transition: all 0.2s ease;
+        }
+        
+        .layer-btn.active { background: rgba(0, 255, 0, 0.3); }
+        .layer-btn:hover { background: rgba(0, 255, 0, 0.1); }
+        
+        .drawing-panel {
+            position: absolute; bottom: 80px; left: 50%; transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.95); border: 2px solid #00ff00;
+            border-radius: 8px; padding: 10px; pointer-events: auto;
+            display: none; box-shadow: 0 0 15px rgba(0, 255, 0, 0.3);
+        }
+        
+        .drawing-panel.active { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+        
+        .color-picker {
+            display: flex; gap: 4px; margin: 0 8px;
+        }
+        
+        .color-option {
+            width: 16px; height: 16px; border-radius: 50%;
+            border: 2px solid #fff; cursor: pointer; transition: all 0.2s ease;
+        }
+        
+        .color-option.active {
+            border-color: #00ff00; box-shadow: 0 0 8px currentColor;
+            transform: scale(1.2);
+        }
+        
+        .obstacle-polygon {
+            stroke-width: 3; fill-opacity: 0.3; stroke-opacity: 0.8;
+            cursor: pointer; transition: all 0.2s ease;
+        }
+        
+        .obstacle-polygon:hover {
+            stroke-width: 4; fill-opacity: 0.5;
         }
         
         .btn {
@@ -55,8 +438,17 @@
         }
         
         .firebase-config {
-            background: rgba(255, 255, 0, 0.1); padding: 15px; border-radius: 8px;
+            background: rgba(255, 255, 0, 0.15); padding: 15px; border-radius: 8px;
             border: 2px solid #ffff00; margin: 10px 0; font-size: 12px;
+            line-height: 1.4;
+        }
+        
+        .firebase-config a {
+            color: #00ff00; text-decoration: underline;
+        }
+        
+        .firebase-config p {
+            margin: 5px 0; text-align: left;
         }
         
         .loading {
@@ -108,11 +500,39 @@
             <div id="membersStatus">👥 Membres: 0</div>
         </div>
         
+        <div class="layer-control">
+            <div style="font-size: 10px; font-weight: bold; margin-bottom: 5px; text-align: center;">CARTES</div>
+            <button class="layer-btn active" onclick="switchLayer('osm')" id="osmBtn">Standard</button>
+            <button class="layer-btn" onclick="switchLayer('satellite')" id="satelliteBtn">Satellite</button>
+            <button class="layer-btn" onclick="switchLayer('topo')" id="topoBtn">Topo</button>
+            <button class="layer-btn" onclick="switchLayer('tactical')" id="tacticalBtn">Tactique</button>
+        </div>
+        
         <div class="controls" style="display: none;" id="controls">
             <button class="btn" onclick="centerOnPlayer()">📍 CENTRER</button>
-            <button class="btn" id="enemyBtn" onclick="toggleEnemyMode()">🎯 ENNEMI</button>
             <button class="btn" onclick="shareCurrentLocation()">📡 PING</button>
+        </div>
+        
+        <div class="controls-center" style="display: none;" id="controlsCenter">
+            <button class="btn" id="enemyBtn" onclick="toggleEnemyMode()">🎯 ENNEMI</button>
+            <button class="btn" id="drawBtn" onclick="toggleDrawMode()">✏️ DESSIN</button>
             <button class="btn" onclick="showConfig()">⚙️ CONFIG</button>
+        </div>
+        
+        <div class="drawing-panel" id="drawingPanel">
+            <span style="font-size: 10px; font-weight: bold;">DESSIN:</span>
+            <button class="btn" style="padding: 4px 8px; font-size: 10px;" id="polygonBtn" onclick="setDrawMode('polygon')">ZONE</button>
+            <button class="btn" style="padding: 4px 8px; font-size: 10px;" id="rectangleBtn" onclick="setDrawMode('rectangle')">RECT</button>
+            <button class="btn" style="padding: 4px 8px; font-size: 10px;" id="circleBtn" onclick="setDrawMode('circle')">CERCLE</button>
+            <div class="color-picker">
+                <div class="color-option active" style="background: #ff4444;" onclick="setDrawColor('#ff4444')"></div>
+                <div class="color-option" style="background: #ffaa00;" onclick="setDrawColor('#ffaa00')"></div>
+                <div class="color-option" style="background: #00ff00;" onclick="setDrawColor('#00ff00')"></div>
+                <div class="color-option" style="background: #0080ff;" onclick="setDrawColor('#0080ff')"></div>
+                <div class="color-option" style="background: #8000ff;" onclick="setDrawColor('#8000ff')"></div>
+            </div>
+            <button class="btn" style="padding: 4px 8px; font-size: 10px;" onclick="clearAllObstacles()">CLEAR</button>
+            <button class="btn" style="padding: 4px 8px; font-size: 10px;" onclick="saveObstacles()">SAVE</button>
         </div>
     </div>
     
@@ -120,28 +540,28 @@
         <h3>🎯 CONFIGURATION FIREBASE</h3>
         
         <div class="firebase-config">
-            <h4>🔧 ÉTAPE 1: Configuration Firebase</h4>
-            <p>1. Allez sur <a href="https://console.firebase.google.com" target="_blank" style="color: #00ff00;">console.firebase.google.com</a></p>
+            <h4 style="margin-bottom: 10px;">🔧 ÉTAPE 1: Configuration Firebase</h4>
+            <p>1. Allez sur <a href="https://console.firebase.google.com" target="_blank">console.firebase.google.com</a></p>
             <p>2. Créez un projet → Realtime Database</p>
             <p>3. Règles de sécurité → Mode test (30 jours)</p>
             <p>4. Votre URL Firebase :</p>
-            <input type="text" id="firebaseUrl" placeholder="https://airsoft-tactical-default-rtdb.europe-west1.firebasedatabase.app/" style="font-size: 12px;" value="https://airsoft-tactical-default-rtdb.europe-west1.firebasedatabase.app/">
+            <input type="text" id="firebaseUrl" placeholder="https://airsoft-tactical-default-rtdb.europe-west1.firebasedatabase.app/" style="font-size: 11px; width: 100%;" value="https://airsoft-tactical-default-rtdb.europe-west1.firebasedatabase.app/">
         </div>
         
         <div style="margin: 15px 0;">
-            <h4>🎯 ÉTAPE 2: Informations d'équipe</h4>
+            <h4 style="margin-bottom: 8px;">🎯 ÉTAPE 2: Informations d'équipe</h4>
             <input type="text" id="teamCode" placeholder="Code équipe (ex: ALPHA-TEAM)" maxlength="20">
             <input type="text" id="playerName" placeholder="Votre indicatif (ex: LEADER)" maxlength="15">
         </div>
         
-        <button class="btn" onclick="connectToFirebase()" style="padding: 12px 24px;">🚀 CONNECTER & DÉMARRER</button>
+        <button class="btn" onclick="connectToFirebase()" style="padding: 12px 24px; font-size: 14px;">🚀 CONNECTER & DÉMARRER</button>
         
-        <div style="margin-top: 15px; font-size: 10px; opacity: 0.8;">
+        <div style="margin-top: 15px; font-size: 10px; opacity: 0.8; text-align: center;">
             <p>⚠️ Tous les membres doivent utiliser la même URL Firebase</p>
             <p>✅ Configuration sauvegardée automatiquement</p>
         </div>
         
-        <button class="btn config-btn" onclick="useTestConfig()">✅ UTILISER VOTRE FIREBASE</button>
+        <button class="btn config-btn" onclick="useTestConfig()" style="margin-top: 10px;">✅ UTILISER VOTRE FIREBASE</button>
     </div>
     
     <div class="loading" id="loading">
@@ -158,10 +578,13 @@
     
     <script>
         // Variables globales
-        let map, playerMarker, teammateMarkers = {}, enemyMarkers = [];
-        let watchId, currentPosition = null, enemyMode = false;
-        let database, teamRef, isConnected = false;
+        let map, currentLayers = {}, playerMarker, teammateMarkers = {}, enemyMarkers = [];
+        let obstacleGroup, watchId, currentPosition = null, enemyMode = false, drawMode = false;
+        let currentDrawMode = 'polygon', currentDrawColor = '#ff4444';
+        let isDrawing = false, currentDrawing = null;
+        let database, teamRef, obstacleRef, isConnected = false;
         let teamCode = '', playerName = '', firebaseUrl = '';
+        let activeLayer = 'osm';
         
         // Charger la configuration sauvegardée
         window.addEventListener('load', () => {
@@ -254,6 +677,7 @@
             updateLoadingText('Configuration équipe...');
             
             teamRef = database.ref(`teams/${teamCode}`);
+            obstacleRef = database.ref(`obstacles/${teamCode}`);
             
             // Écouter les changements d'équipe
             teamRef.on('value', (snapshot) => {
@@ -261,6 +685,12 @@
                 if (teamData) {
                     updateTeamDisplay(teamData);
                 }
+            });
+            
+            // Écouter les obstacles
+            obstacleRef.on('value', (snapshot) => {
+                const obstaclesData = snapshot.val();
+                loadObstaclesFromFirebase(obstaclesData);
             });
             
             // Écouter les nouveaux membres
@@ -298,17 +728,50 @@
                 attributionControl: false
             });
             
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            // Couches de cartes
+            currentLayers.osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 maxZoom: 19
             }).addTo(map);
             
-            // Gestion clic pour ennemis
+            currentLayers.satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                maxZoom: 19
+            });
+            
+            currentLayers.topo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+                maxZoom: 17
+            });
+            
+            // Couche tactique avec quadrillage vert
+            currentLayers.tactical = L.tileLayer('data:image/svg+xml;base64,' + btoa(`
+                <svg width="256" height="256" xmlns="http://www.w3.org/2000/svg">
+                    <defs>
+                        <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+                            <path d="M 32 0 L 0 0 0 32" fill="none" stroke="#00ff00" stroke-width="0.8" opacity="0.6"/>
+                        </pattern>
+                    </defs>
+                    <rect width="256" height="256" fill="#1a1a1a"/>
+                    <rect width="256" height="256" fill="url(#grid)"/>
+                </svg>
+            `), {
+                maxZoom: 20,
+                tileSize: 256
+            });
+            
+            // Groupe pour les obstacles
+            obstacleGroup = L.layerGroup().addTo(map);
+            
+            // Gestion des clics
             map.on('click', function(e) {
                 if (enemyMode) {
                     addEnemyMarker(e.latlng);
                     toggleEnemyMode();
+                } else if (drawMode) {
+                    handleDrawClick(e);
                 }
             });
+            
+            map.on('mousemove', handleDrawMouseMove);
+            map.on('dblclick', finishPolygon);
         }
         
         function startGeolocation() {
@@ -341,6 +804,8 @@
         function onLocationSuccess(position) {
             document.getElementById('loading').style.display = 'none';
             document.getElementById('controls').style.display = 'flex';
+            document.getElementById('controlsCenter').style.display = 'flex';
+            document.getElementById('controlsCenter').style.display = 'flex';
             
             currentPosition = {
                 lat: position.coords.latitude,
@@ -509,6 +974,8 @@
         }
         
         function toggleEnemyMode() {
+            if (drawMode) toggleDrawMode(); // Désactiver dessin
+            
             enemyMode = !enemyMode;
             const btn = document.getElementById('enemyBtn');
             
@@ -574,6 +1041,7 @@
         function showConfig() {
             document.getElementById('teamSetup').style.display = 'block';
             document.getElementById('controls').style.display = 'none';
+            document.getElementById('controlsCenter').style.display = 'none';
         }
         
         function updateLoadingText(text) {
@@ -593,6 +1061,9 @@
             }, 3000);
         }
         
+        // Fonction globale pour supprimer obstacles (appelée depuis les popups)
+        window.removeObstacle = removeObstacle;
+        
         // Nettoyage à la fermeture
         window.addEventListener('beforeunload', () => {
             if (watchId) {
@@ -610,7 +1081,7 @@
             }
         }, 5000);
         
-        console.log('🚀 Airsoft Tactical - Version Firebase simplifiée');
+        console.log('🚀 Airsoft Tactical - Version Firebase complète avec obstacles');
     </script>
 </body>
 </html>
