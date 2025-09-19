@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#1a1a1a">
+    <title>Airsoft Tactical - Synchro</title>
+    
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+    
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; background: #1a1a1a; color: #00ff00; overflow: hidden; }
+        
+        #map { width: 100%; height: 100vh; filter: brightness(0.9); }
+        
+        .hud-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; z-index: 1000;
+        }
+        
+        .status-panel {
+            position: absolute; top: 15px; left: 15px;
+            background: rgba(0, 0, 0, 0.95); padding: 12px; border-radius: 8px;
+            border: 2px solid #00ff00; pointer-events: auto; font-size: 11px;
+            box-shadow: 0 0 15px rgba(0, 255, 0, 0.3);
+        }
+        
+        .controls {
+            position: absolute; bottom: 15px; left: 50%; transform: translateX(-50%);
+            display: flex; gap: 8px; pointer-events: auto;
+        }
+        
+        .btn {
+            padding: 8px 12px; background: rgba(0, 0, 0, 0.9);
+            border: 2px solid #00ff00; color: #00ff00; border-radius: 6px;
+            cursor: pointer; font-weight: bold; font-size: 11px;
+            box-shadow: 0 0 10px rgba(0, 255, 0, 0.3);
+        }
+        
+        .btn:hover { background: rgba(0, 255, 0, 0.2); }
+        .btn.active { background: rgba(255, 0, 0, 0.8); border-color: #ff0000; color: #fff; }
+        
+        .team-setup {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.98); padding: 25px; border-radius: 12px;
+            border: 2px solid #00ff00; text-align: center; z-index: 2000;
+            box-shadow: 0 0 25px rgba(0, 255, 0, 0.5);
+        }
+        
+        .team-setup input {
+            width: 100%; padding: 10px; margin: 8px 0;
+            background: rgba(0, 255, 0, 0.1); border: 2px solid #00ff00;
+            border-radius: 5px; color: #00ff00; font-size: 14px;
+        }
+        
+        .firebase-config {
+            background: rgba(255, 255, 0, 0.1); padding: 15px; border-radius: 8px;
+            border: 2px solid #ffff00; margin: 10px 0; font-size: 12px;
+        }
+        
+        .loading {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9); padding: 20px; border-radius: 8px;
+            border: 2px solid #00ff00; z-index: 2000; display: none; text-align: center;
+        }
+        
+        .notification {
+            position: absolute; top: 15px; right: 15px;
+            background: rgba(0, 255, 0, 0.95); color: #000; padding: 8px 15px;
+            border-radius: 20px; font-size: 11px; font-weight: bold;
+            animation: slideIn 0.3s ease; pointer-events: none; z-index: 1500;
+        }
+        
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        .config-btn {
+            background: #ffaa00; color: #000; margin: 5px;
+        }
+        
+        .status-dot {
+            display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+            margin-right: 5px; animation: pulse 2s infinite;
+        }
+        
+        .dot-green { background: #00ff00; }
+        .dot-red { background: #ff0000; }
+        .dot-yellow { background: #ffff00; }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    
+    <div class="hud-overlay">
+        <div class="status-panel">
+            <div style="font-weight: bold; margin-bottom: 8px;">🎯 AIRSOFT TACTICAL</div>
+            <div id="firebaseStatus"><span class="status-dot dot-red"></span>Firebase: Déconnecté</div>
+            <div id="gpsStatus"><span class="status-dot dot-red"></span>GPS: Initialisation</div>
+            <div id="teamStatus"><span class="status-dot dot-red"></span>Équipe: Aucune</div>
+            <div id="membersStatus">👥 Membres: 0</div>
+        </div>
+        
+        <div class="controls" style="display: none;" id="controls">
+            <button class="btn" onclick="centerOnPlayer()">📍 CENTRER</button>
+            <button class="btn" id="enemyBtn" onclick="toggleEnemyMode()">🎯 ENNEMI</button>
+            <button class="btn" onclick="shareCurrentLocation()">📡 PING</button>
+            <button class="btn" onclick="showConfig()">⚙️ CONFIG</button>
+        </div>
+    </div>
+    
+    <div class="team-setup" id="teamSetup">
+        <h3>🎯 CONFIGURATION FIREBASE</h3>
+        
+        <div class="firebase-config">
+            <h4>🔧 ÉTAPE 1: Configuration Firebase</h4>
+            <p>1. Allez sur <a href="https://console.firebase.google.com" target="_blank" style="color: #00ff00;">console.firebase.google.com</a></p>
+            <p>2. Créez un projet → Realtime Database</p>
+            <p>3. Règles de sécurité → Mode test (30 jours)</p>
+            <p>4. Votre URL Firebase :</p>
+            <input type="text" id="firebaseUrl" placeholder="https://airsoft-tactical-default-rtdb.europe-west1.firebasedatabase.app/" style="font-size: 12px;" value="https://airsoft-tactical-default-rtdb.europe-west1.firebasedatabase.app/">
+        </div>
+        
+        <div style="margin: 15px 0;">
+            <h4>🎯 ÉTAPE 2: Informations d'équipe</h4>
+            <input type="text" id="teamCode" placeholder="Code équipe (ex: ALPHA-TEAM)" maxlength="20">
+            <input type="text" id="playerName" placeholder="Votre indicatif (ex: LEADER)" maxlength="15">
+        </div>
+        
+        <button class="btn" onclick="connectToFirebase()" style="padding: 12px 24px;">🚀 CONNECTER & DÉMARRER</button>
+        
+        <div style="margin-top: 15px; font-size: 10px; opacity: 0.8;">
+            <p>⚠️ Tous les membres doivent utiliser la même URL Firebase</p>
+            <p>✅ Configuration sauvegardée automatiquement</p>
+        </div>
+        
+        <button class="btn config-btn" onclick="useTestConfig()">✅ UTILISER VOTRE FIREBASE</button>
+    </div>
+    
+    <div class="loading" id="loading">
+        <div id="loadingText">🔄 Connexion en cours...</div>
+        <div style="font-size: 12px; margin-top: 10px;" id="loadingDetail">Initialisation Firebase</div>
+    </div>
+    
+    <!-- Firebase SDK -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.23.0/firebase-app-compat.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.23.0/firebase-database-compat.min.js"></script>
+    
+    <!-- Leaflet -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    
+    <script>
+        // Variables globales
+        let map, playerMarker, teammateMarkers = {}, enemyMarkers = [];
+        let watchId, currentPosition = null, enemyMode = false;
+        let database, teamRef, isConnected = false;
+        let teamCode = '', playerName = '', firebaseUrl = '';
+        
+        // Charger la configuration sauvegardée
+        window.addEventListener('load', () => {
+            const savedConfig = localStorage.getItem('airsoftConfig');
+            if (savedConfig) {
+                const config = JSON.parse(savedConfig);
+                document.getElementById('firebaseUrl').value = config.firebaseUrl || '';
+                document.getElementById('teamCode').value = config.teamCode || '';
+                document.getElementById('playerName').value = config.playerName || '';
+            }
+        });
+        
+        function useTestConfig() {
+            // Votre configuration Firebase personnelle
+            document.getElementById('firebaseUrl').value = 'https://airsoft-tactical-default-rtdb.europe-west1.firebasedatabase.app/';
+            document.getElementById('teamCode').value = 'ALPHA-TEAM';
+            document.getElementById('playerName').value = 'LEADER-' + Math.floor(Math.random() * 99);
+            showNotification('Configuration Firebase chargée');
+        }
+        
+        function connectToFirebase() {
+            firebaseUrl = document.getElementById('firebaseUrl').value.trim();
+            teamCode = document.getElementById('teamCode').value.trim().toUpperCase();
+            playerName = document.getElementById('playerName').value.trim().toUpperCase();
+            
+            if (!firebaseUrl || !teamCode || !playerName) {
+                alert('Veuillez remplir tous les champs');
+                return;
+            }
+            
+            // Validation URL Firebase
+            if (!firebaseUrl.includes('firebasedatabase.app') && !firebaseUrl.includes('firebaseio.com')) {
+                alert('URL Firebase invalide. Format: https://votre-projet-default-rtdb.region.firebasedatabase.app/');
+                return;
+            }
+            
+            // Sauvegarder la configuration
+            localStorage.setItem('airsoftConfig', JSON.stringify({
+                firebaseUrl, teamCode, playerName
+            }));
+            
+            document.getElementById('teamSetup').style.display = 'none';
+            document.getElementById('loading').style.display = 'block';
+            
+            initializeFirebase();
+        }
+        
+        function initializeFirebase() {
+            try {
+                updateLoadingText('Connexion Firebase...');
+                
+                const firebaseConfig = {
+                    databaseURL: firebaseUrl
+                };
+                
+                // Initialiser Firebase
+                if (firebase.apps.length === 0) {
+                    firebase.initializeApp(firebaseConfig);
+                }
+                
+                database = firebase.database();
+                
+                // Tester la connexion
+                database.ref('.info/connected').on('value', (snapshot) => {
+                    isConnected = snapshot.val();
+                    
+                    if (isConnected) {
+                        document.getElementById('firebaseStatus').innerHTML = 
+                            '<span class="status-dot dot-green"></span>Firebase: ✅ Connecté';
+                        
+                        if (!teamRef) {
+                            setupTeam();
+                        }
+                    } else {
+                        document.getElementById('firebaseStatus').innerHTML = 
+                            '<span class="status-dot dot-red"></span>Firebase: ❌ Déconnecté';
+                    }
+                });
+                
+            } catch (error) {
+                console.error('Erreur Firebase:', error);
+                document.getElementById('firebaseStatus').innerHTML = 
+                    '<span class="status-dot dot-red"></span>Firebase: ❌ Erreur config';
+                alert('Erreur Firebase: ' + error.message);
+                showConfig();
+            }
+        }
+        
+        function setupTeam() {
+            updateLoadingText('Configuration équipe...');
+            
+            teamRef = database.ref(`teams/${teamCode}`);
+            
+            // Écouter les changements d'équipe
+            teamRef.on('value', (snapshot) => {
+                const teamData = snapshot.val();
+                if (teamData) {
+                    updateTeamDisplay(teamData);
+                }
+            });
+            
+            // Écouter les nouveaux membres
+            teamRef.on('child_added', (snapshot) => {
+                const playerId = snapshot.key;
+                if (playerId !== playerName) {
+                    showNotification(`${playerId} a rejoint l'équipe`);
+                }
+            });
+            
+            // Écouter les départs
+            teamRef.on('child_removed', (snapshot) => {
+                const playerId = snapshot.key;
+                if (teammateMarkers[playerId]) {
+                    map.removeLayer(teammateMarkers[playerId]);
+                    delete teammateMarkers[playerId];
+                    showNotification(`${playerId} a quitté l'équipe`);
+                }
+            });
+            
+            document.getElementById('teamStatus').innerHTML = 
+                `<span class="status-dot dot-green"></span>Équipe: ${teamCode}`;
+            
+            initializeMap();
+            startGeolocation();
+        }
+        
+        function initializeMap() {
+            updateLoadingText('Initialisation carte...');
+            
+            map = L.map('map', {
+                center: [48.8566, 2.3522],
+                zoom: 15,
+                zoomControl: false,
+                attributionControl: false
+            });
+            
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19
+            }).addTo(map);
+            
+            // Gestion clic pour ennemis
+            map.on('click', function(e) {
+                if (enemyMode) {
+                    addEnemyMarker(e.latlng);
+                    toggleEnemyMode();
+                }
+            });
+        }
+        
+        function startGeolocation() {
+            updateLoadingText('Acquisition GPS...');
+            
+            if (!navigator.geolocation) {
+                alert('Géolocalisation non supportée');
+                return;
+            }
+            
+            const options = {
+                enableHighAccuracy: true,
+                maximumAge: 5000,
+                timeout: 10000
+            };
+            
+            navigator.geolocation.getCurrentPosition(
+                onLocationSuccess, 
+                onLocationError, 
+                options
+            );
+            
+            watchId = navigator.geolocation.watchPosition(
+                onLocationSuccess, 
+                onLocationError, 
+                options
+            );
+        }
+        
+        function onLocationSuccess(position) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('controls').style.display = 'flex';
+            
+            currentPosition = {
+                lat: position.coords.latitude,
+                lng: position.coords.longitude,
+                accuracy: Math.round(position.coords.accuracy),
+                timestamp: Date.now()
+            };
+            
+            document.getElementById('gpsStatus').innerHTML = 
+                '<span class="status-dot dot-green"></span>GPS: ✅ Actif';
+            
+            updatePlayerMarker();
+            sharePosition();
+            
+            // Centrer la première fois
+            if (!map.hasLayer(playerMarker)) {
+                centerOnPlayer();
+            }
+        }
+        
+        function onLocationError(error) {
+            document.getElementById('gpsStatus').innerHTML = 
+                '<span class="status-dot dot-red"></span>GPS: ❌ Erreur';
+            
+            console.error('Erreur GPS:', error);
+            
+            // Position de démonstration
+            currentPosition = {
+                lat: 48.8566 + (Math.random() - 0.5) * 0.01,
+                lng: 2.3522 + (Math.random() - 0.5) * 0.01,
+                accuracy: 999,
+                timestamp: Date.now()
+            };
+            
+            updatePlayerMarker();
+            sharePosition();
+            
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('controls').style.display = 'flex';
+            
+            showNotification('GPS indisponible - Mode démo');
+        }
+        
+        function updatePlayerMarker() {
+            if (!map || !currentPosition) return;
+            
+            if (playerMarker) map.removeLayer(playerMarker);
+            
+            const playerIcon = L.divIcon({
+                className: '',
+                html: `<div style="
+                    width: 20px; height: 20px; background: #ff0000; 
+                    border: 3px solid #fff; border-radius: 50%;
+                    box-shadow: 0 0 15px #ff0000;
+                "></div>`,
+                iconSize: [20, 20],
+                iconAnchor: [10, 10]
+            });
+            
+            playerMarker = L.marker([currentPosition.lat, currentPosition.lng], {
+                icon: playerIcon
+            }).addTo(map);
+            
+            playerMarker.bindPopup(`
+                <b>${playerName}</b><br>
+                Équipe: ${teamCode}<br>
+                Précision: ${currentPosition.accuracy}m<br>
+                Dernière MAJ: ${new Date().toLocaleTimeString()}
+            `);
+        }
+        
+        function sharePosition() {
+            if (!teamRef || !currentPosition) return;
+            
+            teamRef.child(playerName).set({
+                lat: currentPosition.lat,
+                lng: currentPosition.lng,
+                accuracy: currentPosition.accuracy,
+                timestamp: currentPosition.timestamp,
+                lastSeen: Date.now()
+            });
+        }
+        
+        function shareCurrentLocation() {
+            if (currentPosition) {
+                sharePosition();
+                showNotification('Position partagée');
+            }
+        }
+        
+        function updateTeamDisplay(teamData) {
+            const members = Object.keys(teamData);
+            document.getElementById('membersStatus').textContent = `👥 Membres: ${members.length}`;
+            
+            // Mettre à jour les marqueurs des coéquipiers
+            members.forEach(memberId => {
+                if (memberId === playerName) return; // Ignorer sa propre position
+                
+                const member = teamData[memberId];
+                if (!member.lat || !member.lng) return;
+                
+                // Calculer la distance
+                let distance = 0;
+                if (currentPosition) {
+                    distance = Math.round(calculateDistance(
+                        currentPosition.lat, currentPosition.lng,
+                        member.lat, member.lng
+                    ));
+                }
+                
+                // Supprimer ancien marqueur
+                if (teammateMarkers[memberId]) {
+                    map.removeLayer(teammateMarkers[memberId]);
+                }
+                
+                // Créer nouveau marqueur
+                const teammateIcon = L.divIcon({
+                    className: '',
+                    html: `
+                        <div style="display: flex; flex-direction: column; align-items: center;">
+                            <div style="width: 16px; height: 16px; background: #00ff00; border: 2px solid #fff; border-radius: 50%; margin-bottom: 3px;"></div>
+                            <div style="background: rgba(0,255,0,0.9); color: #000; padding: 2px 6px; border-radius: 10px; font-size: 10px; font-weight: bold; border: 1px solid #fff; white-space: nowrap;">
+                                ${memberId} - ${distance}m
+                            </div>
+                        </div>
+                    `,
+                    iconSize: [80, 40],
+                    iconAnchor: [40, 20]
+                });
+                
+                teammateMarkers[memberId] = L.marker([member.lat, member.lng], {
+                    icon: teammateIcon
+                }).addTo(map);
+                
+                // Age de la position
+                const ageMinutes = Math.floor((Date.now() - member.lastSeen) / 60000);
+                const ageText = ageMinutes > 0 ? `${ageMinutes}min` : 'maintenant';
+                
+                teammateMarkers[memberId].bindPopup(`
+                    <b>${memberId}</b><br>
+                    Distance: ${distance}m<br>
+                    Précision: ${member.accuracy}m<br>
+                    Dernière position: ${ageText}<br>
+                    Coordonnées: ${member.lat.toFixed(6)}, ${member.lng.toFixed(6)}
+                `);
+            });
+        }
+        
+        function calculateDistance(lat1, lng1, lat2, lng2) {
+            const R = 6371000; // Rayon terre en mètres
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLng = (lng2 - lng1) * Math.PI / 180;
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                    Math.sin(dLng/2) * Math.sin(dLng/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            return R * c;
+        }
+        
+        function centerOnPlayer() {
+            if (currentPosition && map) {
+                map.setView([currentPosition.lat, currentPosition.lng], 17, {
+                    animate: true, duration: 1
+                });
+            }
+        }
+        
+        function toggleEnemyMode() {
+            enemyMode = !enemyMode;
+            const btn = document.getElementById('enemyBtn');
+            
+            if (enemyMode) {
+                btn.classList.add('active');
+                map.getContainer().style.cursor = 'crosshair';
+                showNotification('Mode ennemi - Cliquez sur la carte');
+            } else {
+                btn.classList.remove('active');
+                map.getContainer().style.cursor = '';
+            }
+        }
+        
+        function addEnemyMarker(latlng) {
+            const enemyIcon = L.divIcon({
+                className: '',
+                html: '<div style="width: 16px; height: 16px; background: #ff4444; border: 2px solid #fff; transform: rotate(45deg); animation: blink 0.8s infinite alternate;"></div><style>@keyframes blink { 0% { opacity: 1; } 100% { opacity: 0.6; } }</style>',
+                iconSize: [16, 16],
+                iconAnchor: [8, 8]
+            });
+            
+            const enemyMarker = L.marker([latlng.lat, latlng.lng], {
+                icon: enemyIcon
+            }).addTo(map);
+            
+            enemyMarker.bindPopup(`
+                ⚠️ Ennemi signalé par ${playerName}<br>
+                Disparaît dans 30s<br>
+                <button onclick="map.removeLayer(arguments[0])" style="background: #ff4444; color: white; border: none; padding: 3px 8px; border-radius: 3px; cursor: pointer;">Supprimer</button>
+            `);
+            
+            enemyMarkers.push(enemyMarker);
+            
+            // Partager avec l'équipe (optionnel)
+            if (teamRef) {
+                const enemyRef = teamRef.child('enemies').push();
+                enemyRef.set({
+                    lat: latlng.lat,
+                    lng: latlng.lng,
+                    reportedBy: playerName,
+                    timestamp: Date.now()
+                });
+                
+                // Supprimer après 30s
+                setTimeout(() => enemyRef.remove(), 30000);
+            }
+            
+            // Supprimer de la carte après 30s
+            setTimeout(() => {
+                if (map.hasLayer(enemyMarker)) {
+                    map.removeLayer(enemyMarker);
+                    enemyMarkers = enemyMarkers.filter(marker => marker !== enemyMarker);
+                }
+            }, 30000);
+            
+            showNotification('Ennemi marqué et partagé !');
+            
+            if (navigator.vibrate) {
+                navigator.vibrate(200);
+            }
+        }
+        
+        function showConfig() {
+            document.getElementById('teamSetup').style.display = 'block';
+            document.getElementById('controls').style.display = 'none';
+        }
+        
+        function updateLoadingText(text) {
+            document.getElementById('loadingText').textContent = text;
+        }
+        
+        function showNotification(message) {
+            const notification = document.createElement('div');
+            notification.className = 'notification';
+            notification.textContent = message;
+            document.body.appendChild(notification);
+            
+            setTimeout(() => {
+                if (document.body.contains(notification)) {
+                    document.body.removeChild(notification);
+                }
+            }, 3000);
+        }
+        
+        // Nettoyage à la fermeture
+        window.addEventListener('beforeunload', () => {
+            if (watchId) {
+                navigator.geolocation.clearWatch(watchId);
+            }
+            if (teamRef && playerName) {
+                teamRef.child(playerName).remove();
+            }
+        });
+        
+        // Partage automatique de position toutes les 5 secondes
+        setInterval(() => {
+            if (currentPosition && isConnected) {
+                sharePosition();
+            }
+        }, 5000);
+        
+        console.log('🚀 Airsoft Tactical - Version Firebase simplifiée');
+    </script>
+</body>
+</html>
