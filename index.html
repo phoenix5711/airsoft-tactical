@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#1a1a1a">
+    <title>Airsoft Tactical Pro</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; background: #000; color: #00ff00; overflow: hidden; }
+        
+        /* Écran de configuration */
+        .setup-screen {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: #000; display: flex; justify-content: center; align-items: center;
+            z-index: 10000;
+        }
+        
+        .setup-box {
+            background: #1a1a1a; padding: 30px; border-radius: 15px;
+            border: 2px solid #00ff00; text-align: center; max-width: 90%;
+            box-shadow: 0 0 30px rgba(0, 255, 0, 0.5);
+        }
+        
+        .setup-box h1 { margin-bottom: 20px; font-size: 24px; }
+        .setup-box input {
+            width: 100%; padding: 12px; margin: 10px 0;
+            background: #333; border: 2px solid #00ff00; color: #00ff00;
+            border-radius: 8px; font-size: 16px;
+        }
+        
+        .setup-box button {
+            padding: 15px 30px; background: #00ff00; color: #000;
+            border: none; border-radius: 8px; cursor: pointer;
+            font-weight: bold; font-size: 16px; margin-top: 15px;
+        }
+        
+        .setup-box button:hover { background: #00cc00; }
+        
+        .firebase-info {
+            background: #2a2a00; padding: 15px; border-radius: 8px;
+            margin: 15px 0; font-size: 12px; text-align: left;
+        }
+        
+        .firebase-info a { color: #00ff00; }
+        
+        /* Interface principale */
+        #map { width: 100%; height: 100vh; filter: brightness(0.9); }
+        
+        .hud {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; z-index: 1000;
+        }
+        
+        .status {
+            position: absolute; top: 15px; left: 15px;
+            background: rgba(0, 0, 0, 0.9); padding: 12px; border-radius: 8px;
+            border: 2px solid #00ff00; pointer-events: auto; font-size: 11px;
+            box-shadow: 0 0 15px rgba(0, 255, 0, 0.3);
+        }
+        
+        .layers {
+            position: absolute; top: 15px; right: 15px;
+            background: rgba(0, 0, 0, 0.9); border: 2px solid #00ff00;
+            border-radius: 8px; padding: 8px; pointer-events: auto;
+        }
+        
+        .layer-btn {
+            display: block; width: 70px; margin: 3px 0; padding: 6px;
+            background: rgba(0, 0, 0, 0.8); border: 1px solid #00ff00;
+            color: #00ff00; border-radius: 4px; cursor: pointer; font-size: 10px;
+            text-align: center;
+        }
+        
+        .layer-btn.active { background: rgba(0, 255, 0, 0.3); }
+        
+        .controls-bottom {
+            position: absolute; bottom: 15px; left: 50%; transform: translateX(-50%);
+            display: flex; gap: 10px; pointer-events: auto;
+        }
+        
+        .btn {
+            padding: 10px 15px; background: rgba(0, 0, 0, 0.9);
+            border: 2px solid #00ff00; color: #00ff00; border-radius: 6px;
+            cursor: pointer; font-weight: bold; font-size: 11px;
+            box-shadow: 0 0 10px rgba(0, 255, 0, 0.3);
+        }
+        
+        .btn:hover { background: rgba(0, 255, 0, 0.2); }
+        .btn.active { background: rgba(255, 0, 0, 0.8); border-color: #ff0000; color: #fff; }
+        
+        .draw-panel {
+            position: absolute; bottom: 80px; left: 50%; transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.9); border: 2px solid #00ff00;
+            border-radius: 8px; padding: 10px; pointer-events: auto;
+            display: none; box-shadow: 0 0 15px rgba(0, 255, 0, 0.3);
+        }
+        
+        .draw-panel.show { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+        
+        .color-picker {
+            display: flex; gap: 4px; margin: 0 8px;
+        }
+        
+        .color { 
+            width: 16px; height: 16px; border-radius: 50%;
+            border: 2px solid #fff; cursor: pointer;
+        }
+        
+        .color.active { border-color: #00ff00; box-shadow: 0 0 8px currentColor; }
+        
+        .hidden { display: none !important; }
+        
+        .loading {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9); padding: 20px; border-radius: 8px;
+            border: 2px solid #00ff00; z-index: 9999; text-align: center;
+        }
+        
+        .notification {
+            position: fixed; top: 20px; right: 20px; z-index: 2000;
+            background: rgba(0, 255, 0, 0.9); color: #000; padding: 10px 20px;
+            border-radius: 20px; font-weight: bold; font-size: 12px;
+            animation: slideIn 0.3s ease;
+        }
+        
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Écran de configuration -->
+    <div class="setup-screen" id="setupScreen">
+        <div class="setup-box">
+            <h1>🎯 AIRSOFT TACTICAL</h1>
+            
+            <div class="firebase-info">
+                <strong>Firebase requis :</strong><br>
+                1. <a href="https://console.firebase.google.com" target="_blank">console.firebase.google.com</a><br>
+                2. Créer projet → Realtime Database<br>
+                3. Règles → Mode test (30 jours)
+            </div>
+            
+            <input type="text" id="firebaseUrl" placeholder="URL Firebase" 
+                   value="https://airsoft-tactical-default-rtdb.europe-west1.firebasedatabase.app/">
+            <input type="text" id="teamCode" placeholder="Code équipe (ex: ALPHA)" maxlength="15">
+            <input type="text" id="playerName" placeholder="Votre indicatif (ex: LEADER)" maxlength="10">
+            
+            <button onclick="startApp()">🚀 DÉMARRER MISSION</button>
+        </div>
+    </div>
+
+    <!-- Écran de chargement -->
+    <div class="loading hidden" id="loadingScreen">
+        <div>🔄 Connexion Firebase...</div>
+        <div id="loadingStatus" style="font-size: 12px; margin-top: 10px;">Initialisation</div>
+    </div>
+
+    <!-- Carte principale -->
+    <div id="map" class="hidden"></div>
+
+    <!-- Interface HUD -->
+    <div class="hud hidden" id="gameHUD">
+        <div class="status">
+            <div style="font-weight: bold; margin-bottom: 8px;">🎯 STATUS</div>
+            <div id="firebaseStatus">🔥 Firebase: ❌</div>
+            <div id="gpsStatus">📍 GPS: ❌</div>
+            <div id="teamStatus">👥 Équipe: 0</div>
+        </div>
+
+        <div class="layers">
+            <div style="font-size: 10px; font-weight: bold; margin-bottom: 5px; text-align: center;">CARTES</div>
+            <button class="layer-btn active" onclick="switchLayer('osm')">Standard</button>
+            <button class="layer-btn" onclick="switchLayer('satellite')">Satellite</button>
+            <button class="layer-btn" onclick="switchLayer('topo')">Topo</button>
+            <button class="layer-btn" onclick="switchLayer('tactical')">Tactique</button>
+        </div>
+
+        <div class="controls-bottom">
+            <button class="btn" onclick="centerPlayer()">📍 CENTRER</button>
+            <button class="btn" id="enemyBtn" onclick="toggleEnemy()">🎯 ENNEMI</button>
+            <button class="btn" id="drawBtn" onclick="toggleDraw()">✏️ DESSIN</button>
+            <button class="btn" onclick="showSetup()">⚙️ CONFIG</button>
+        </div>
+
+        <div class="draw-panel" id="drawPanel">
+            <span style="font-size: 10px; font-weight: bold;">DESSIN:</span>
+            <button class="btn" onclick="setDrawMode('polygon')" style="padding: 4px 8px; font-size: 10px;">ZONE</button>
+            <button class="btn" onclick="setDrawMode('rectangle')" style="padding: 4px 8px; font-size: 10px;">RECT</button>
+            <button class="btn" onclick="setDrawMode('circle')" style="padding: 4px 8px; font-size: 10px;">CERCLE</button>
+            <div class="color-picker">
+                <div class="color active" style="background: #ff4444;" onclick="setColor('#ff4444')"></div>
+                <div class="color" style="background: #ffaa00;" onclick="setColor('#ffaa00')"></div>
+                <div class="color" style="background: #00ff00;" onclick="setColor('#00ff00')"></div>
+                <div class="color" style="background: #0080ff;" onclick="setColor('#0080ff')"></div>
+                <div class="color" style="background: #8000ff;" onclick="setColor('#8000ff')"></div>
+            </div>
+            <button class="btn" onclick="clearObstacles()" style="padding: 4px 8px; font-size: 10px;">CLEAR</button>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.23.0/firebase-app-compat.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.23.0/firebase-database-compat.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+
+    <script>
+        // Variables globales
+        let map, layers = {}, playerMarker, teammateMarkers = {};
+        let obstacleGroup, database, teamRef, obstacleRef;
+        let currentPosition, watchId, isConnected = false;
+        let enemyMode = false, drawMode = false, currentDrawMode = 'polygon', currentColor = '#ff4444';
+        let teamCode, playerName, firebaseUrl;
+
+        // Démarrer l'application
+        function startApp() {
+            firebaseUrl = document.getElementById('firebaseUrl').value.trim();
+            teamCode = document.getElementById('teamCode').value.trim().toUpperCase();
+            playerName = document.getElementById('playerName').value.trim().toUpperCase();
+
+            if (!firebaseUrl || !teamCode || !playerName) {
+                alert('Veuillez remplir tous les champs');
+                return;
+            }
+
+            // Sauvegarder config
+            localStorage.setItem('airsoftConfig', JSON.stringify({firebaseUrl, teamCode, playerName}));
+
+            // Masquer setup et afficher loading
+            document.getElementById('setupScreen').classList.add('hidden');
+            document.getElementById('loadingScreen').classList.remove('hidden');
+
+            initFirebase();
+        }
+
+        // Initialiser Firebase
+        function initFirebase() {
+            updateLoading('Connexion Firebase...');
+            
+            try {
+                const config = { databaseURL: firebaseUrl };
+                
+                if (firebase.apps.length === 0) {
+                    firebase.initializeApp(config);
+                }
+                
+                database = firebase.database();
+                
+                // Test connexion
+                database.ref('.info/connected').on('value', (snapshot) => {
+                    isConnected = snapshot.val();
+                    updateStatus('firebaseStatus', isConnected ? '🔥 Firebase: ✅' : '🔥 Firebase: ❌');
+                    
+                    if (isConnected && !teamRef) {
+                        setupTeam();
+                    }
+                });
+                
+            } catch (error) {
+                console.error('Erreur Firebase:', error);
+                alert('Erreur Firebase: ' + error.message);
+                showSetup();
+            }
+        }
+
+        // Configuration équipe
+        function setupTeam() {
+            updateLoading('Configuration équipe...');
+            
+            teamRef = database.ref(`teams/${teamCode}`);
+            obstacleRef = database.ref(`obstacles/${teamCode}`);
+            
+            // Écouter équipe
+            teamRef.on('value', updateTeam);
+            obstacleRef.on('value', updateObstacles);
+            
+            // Notifs membres
+            teamRef.on('child_added', (snapshot) => {
+                const id = snapshot.key;
+                if (id !== playerName) notify(`${id} rejoint l'équipe`);
+            });
+            
+            teamRef.on('child_removed', (snapshot) => {
+                const id = snapshot.key;
+                if (teammateMarkers[id]) {
+                    map.removeLayer(teammateMarkers[id]);
+                    delete teammateMarkers[id];
+                    notify(`${id} quitte l'équipe`);
+                }
+            });
+            
+            initMap();
+        }
+
+        // Initialiser carte
+        function initMap() {
+            updateLoading('Chargement carte...');
+            
+            map = L.map('map', {
+                center: [48.8566, 2.3522],
+                zoom: 15,
+                zoomControl: false,
+                attributionControl: false
+            });
+
+            // Couches
+            layers.osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19}).addTo(map);
+            layers.satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {maxZoom: 19});
+            layers.topo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {maxZoom: 17});
+            layers.tactical = L.tileLayer('data:image/svg+xml;base64,' + btoa(`
+                <svg width="256" height="256" xmlns="http://www.w3.org/2000/svg">
+                    <defs><pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+                        <path d="M 32 0 L 0 0 0 32" fill="none" stroke="#00ff00" stroke-width="0.8" opacity="0.6"/>
+                    </pattern></defs>
+                    <rect width="256" height="256" fill="#1a1a1a"/>
+                    <rect width="256" height="256" fill="url(#grid)"/>
+                </svg>
+            `), {maxZoom: 20});
+
+            // Groupe obstacles
+            obstacleGroup = L.layerGroup().addTo(map);
+
+            // Events
+            map.on('click', onMapClick);
+
+            startGPS();
+        }
+
+        // GPS
+        function startGPS() {
+            updateLoading('Activation GPS...');
+            
+            if (!navigator.geolocation) {
+                alert('GPS non supporté');
+                return;
+            }
+
+            const options = { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 };
+            
+            navigator.geolocation.getCurrentPosition(onGPS, onGPSError, options);
+            watchId = navigator.geolocation.watchPosition(onGPS, onGPSError, options);
+        }
+
+        function onGPS(position) {
+            currentPosition = {
+                lat: position.coords.latitude,
+                lng: position.coords.longitude,
+                accuracy: Math.round(position.coords.accuracy),
+                timestamp: Date.now()
+            };
+
+            updateStatus('gpsStatus', '📍 GPS: ✅');
+            updatePlayerMarker();
+            sharePosition();
+
+            // Première fois : afficher l'interface
+            if (document.getElementById('map').classList.contains('hidden')) {
+                document.getElementById('loadingScreen').classList.add('hidden');
+                document.getElementById('map').classList.remove('hidden');
+                document.getElementById('gameHUD').classList.remove('hidden');
+                centerPlayer();
+            }
+        }
+
+        function onGPSError(error) {
+            updateStatus('gpsStatus', '📍 GPS: ❌');
+            
+            // Position démo
+            currentPosition = {
+                lat: 48.8566 + (Math.random() - 0.5) * 0.01,
+                lng: 2.3522 + (Math.random() - 0.5) * 0.01,
+                accuracy: 999,
+                timestamp: Date.now()
+            };
+            
+            updatePlayerMarker();
+            sharePosition();
+            
+            document.getElementById('loadingScreen').classList.add('hidden');
+            document.getElementById('map').classList.remove('hidden');
+            document.getElementById('gameHUD').classList.remove('hidden');
+            
+            notify('GPS indisponible - Mode démo');
+        }
+
+        // Marqueur joueur
+        function updatePlayerMarker() {
+            if (!map || !currentPosition) return;
+            
+            if (playerMarker) map.removeLayer(playerMarker);
+            
+            const icon = L.divIcon({
+                className: '',
+                html: `<div style="width: 20px; height: 20px; background: #ff0000; border: 3px solid #fff; border-radius: 50%; box-shadow: 0 0 15px #ff0000;"></div>`,
+                iconSize: [20, 20],
+                iconAnchor: [10, 10]
+            });
+            
+            playerMarker = L.marker([currentPosition.lat, currentPosition.lng], {icon}).addTo(map);
+            playerMarker.bindPopup(`<b>${playerName}</b><br>Équipe: ${teamCode}<br>Précision: ${currentPosition.accuracy}m`);
+        }
+
+        // Partager position
+        function sharePosition() {
+            if (!teamRef || !currentPosition) return;
+            
+            teamRef.child(playerName).set({
+                lat: currentPosition.lat,
+                lng: currentPosition.lng,
+                accuracy: currentPosition.accuracy,
+                timestamp: currentPosition.timestamp,
+                lastSeen: Date.now()
+            });
+        }
+
+        // Mettre à jour équipe
+        function updateTeam(snapshot) {
+            const data = snapshot.val();
+            if (!data) return;
+            
+            const members = Object.keys(data);
+            updateStatus('teamStatus', `👥 Équipe: ${members.length}`);
+            
+            members.forEach(id => {
+                if (id === playerName) return;
+                
+                const member = data[id];
+                if (!member.lat || !member.lng) return;
+                
+                let distance = 0;
+                if (currentPosition) {
+                    const R = 6371000;
+                    const dLat = (member.lat - currentPosition.lat) * Math.PI / 180;
+                    const dLng = (member.lng - currentPosition.lng) * Math.PI / 180;
+                    const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(currentPosition.lat * Math.PI / 180) * Math.cos(member.lat * Math.PI / 180) * Math.sin(dLng/2) * Math.sin(dLng/2);
+                    distance = Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
+                }
+                
+                if (teammateMarkers[id]) map.removeLayer(teammateMarkers[id]);
+                
+                const icon = L.divIcon({
+                    className: '',
+                    html: `
+                        <div style="display: flex; flex-direction: column; align-items: center;">
+                            <div style="width: 16px; height: 16px; background: #00ff00; border: 2px solid #fff; border-radius: 50%; margin-bottom: 3px;"></div>
+                            <div style="background: rgba(0,255,0,0.9); color: #000; padding: 2px 6px; border-radius: 10px; font-size: 10px; font-weight: bold; border: 1px solid #fff; white-space: nowrap;">
+                                ${id} - ${distance}m
+                            </div>
+                        </div>
+                    `,
+                    iconSize: [80, 40],
+                    iconAnchor: [40, 20]
+                });
+                
+                teammateMarkers[id] = L.marker([member.lat, member.lng], {icon}).addTo(map);
+                teammateMarkers[id].bindPopup(`<b>${id}</b><br>Distance: ${distance}m<br>Précision: ${member.accuracy}m`);
+            });
+        }
+
+        // Gestion obstacles
+        function updateObstacles(snapshot) {
+            const data = snapshot.val();
+            obstacleGroup.clearLayers();
+            
+            if (!data) return;
+            
+            Object.keys(data).forEach(id => {
+                const obs = data[id];
+                let layer;
+                
+                try {
+                    switch (obs.type) {
+                        case 'rectangle':
+                            layer = L.rectangle(obs.bounds, {color: obs.color, weight: 3, fillOpacity: 0.3});
+                            break;
+                        case 'circle':
+                            layer = L.circle(obs.center, {radius: obs.radius, color: obs.color, weight: 3, fillOpacity: 0.3});
+                            break;
+                        case 'polygon':
+                            layer = L.polygon(obs.points, {color: obs.color, weight: 3, fillOpacity: 0.3});
+                            break;
+                    }
+                    
+                    if (layer) {
+                        layer._obstacleId = id;
+                        layer.bindPopup(`<b>Obstacle ${obs.type}</b><br>Par: ${obs.createdBy}<br><button onclick="removeObstacle('${id}')" style="background: #ff4444; color: white; border: none; padding: 3px 8px; border-radius: 3px; cursor: pointer;">Supprimer</button>`);
+                        obstacleGroup.addLayer(layer);
+                    }
+                } catch (error) {
+                    console.error('Erreur obstacle:', error);
+                }
+            });
+        }
+
+        // Fonctions interface
+        function switchLayer(type) {
+            Object.values(layers).forEach(layer => map.removeLayer(layer));
+            map.addLayer(layers[type]);
+            
+            document.querySelectorAll('.layer-btn').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            notify(`Carte: ${type.toUpperCase()}`);
+        }
+
+        function centerPlayer() {
+            if (currentPosition) {
+                map.setView([currentPosition.lat, currentPosition.lng], 17, {animate: true});
+            }
+        }
+
+        function toggleEnemy() {
+            if (drawMode) toggleDraw();
+            
+            enemyMode = !enemyMode;
+            const btn = document.getElementById('enemyBtn');
+            
+            if (enemyMode) {
+                btn.classList.add('active');
+                map.getContainer().style.cursor = 'crosshair';
+                notify('Mode ennemi - Cliquez sur la carte');
+            } else {
+                btn.classList.remove('active');
+                map.getContainer().style.cursor = '';
+            }
+        }
+
+        function toggleDraw() {
+            if (enemyMode) toggleEnemy();
+            
+            drawMode = !drawMode;
+            const btn = document.getElementById('drawBtn');
+            const panel = document.getElementById('drawPanel');
+            
+            if (drawMode) {
+                btn.classList.add('active');
+                panel.classList.add('show');
+                map.getContainer().style.cursor = 'crosshair';
+                notify('Mode dessin - Sélectionnez un outil');
+            } else {
+                btn.classList.remove('active');
+                panel.classList.remove('show');
+                map.getContainer().style.cursor = '';
+            }
+        }
+
+        function setDrawMode(mode) {
+            currentDrawMode = mode;
+            notify(`Outil: ${mode.toUpperCase()}`);
+        }
+
+        function setColor(color) {
+            currentColor = color;
+            document.querySelectorAll('.color').forEach(c => c.classList.remove('active'));
+            event.target.classList.add('active');
+        }
+
+        function onMapClick(e) {
+            if (enemyMode) {
+                addEnemyMarker(e.latlng);
+                toggleEnemy();
+            } else if (drawMode) {
+                // Logique de dessin simplifiée
+                const obstacleId = 'obs_' + Date.now();
+                let obstacleData = {
+                    type: currentDrawMode,
+                    color: currentColor,
+                    createdBy: playerName,
+                    timestamp: Date.now()
+                };
+
+                if (currentDrawMode === 'circle') {
+                    obstacleData.center = e.latlng;
+                    obstacleData.radius = 50; // Rayon fixe pour simplifier
+                } else {
+                    // Pour rectangle et polygon, créer une zone basique
+                    const offset = 0.0005;
+                    obstacleData.bounds = [
+                        [e.latlng.lat - offset, e.latlng.lng - offset],
+                        [e.latlng.lat + offset, e.latlng.lng + offset]
+                    ];
+                    obstacleData.type = 'rectangle';
+                }
+
+                if (obstacleRef) {
+                    obstacleRef.child(obstacleId).set(obstacleData);
+                }
+                
+                notify('Obstacle ajouté');
+                toggleDraw();
+            }
+        }
+
+        function addEnemyMarker(latlng) {
+            const icon = L.divIcon({
+                className: '',
+                html: '<div style="width: 16px; height: 16px; background: #ff4444; border: 2px solid #fff; transform: rotate(45deg); animation: blink 0.8s infinite alternate;"></div><style>@keyframes blink { 0% { opacity: 1; } 100% { opacity: 0.6; } }</style>',
+                iconSize: [16, 16],
+                iconAnchor: [8, 8]
+            });
+            
+            const marker = L.marker([latlng.lat, latlng.lng], {icon}).addTo(map);
+            marker.bindPopup(`⚠️ Ennemi signalé par ${playerName}<br>Disparaît dans 30s`);
+            
+            setTimeout(() => {
+                if (map.hasLayer(marker)) map.removeLayer(marker);
+            }, 30000);
+            
+            notify('Ennemi marqué !');
+            
+            if (navigator.vibrate) navigator.vibrate(200);
+        }
+
+        function clearObstacles() {
+            if (confirm('Effacer tous les obstacles ?')) {
+                if (obstacleRef) obstacleRef.remove();
+                notify('Obstacles effacés');
+            }
+        }
+
+        function removeObstacle(id) {
+            if (obstacleRef) obstacleRef.child(id).remove();
+            notify('Obstacle supprimé');
+        }
+
+        function showSetup() {
+            document.getElementById('setupScreen').classList.remove('hidden');
+            document.getElementById('map').classList.add('hidden');
+            document.getElementById('gameHUD').classList.add('hidden');
+        }
+
+        // Utilitaires
+        function updateLoading(text) {
+            document.getElementById('loadingStatus').textContent = text;
+        }
+
+        function updateStatus(id, text) {
+            document.getElementById(id).textContent = text;
+        }
+
+        function notify(message) {
+            const notif = document.createElement('div');
+            notif.className = 'notification';
+            notif.textContent = message;
+            document.body.appendChild(notif);
+            
+            setTimeout(() => {
+                if (document.body.contains(notif)) document.body.removeChild(notif);
+            }, 3000);
+        }
+
+        // Fonction globale pour les popups
+        window.removeObstacle = removeObstacle;
+
+        // Charger config sauvegardée
+        window.addEventListener('load', () => {
+            const saved = localStorage.getItem('airsoftConfig');
+            if (saved) {
+                const config = JSON.parse(saved);
+                document.getElementById('firebaseUrl').value = config.firebaseUrl || '';
+                document.getElementById('teamCode').value = config.teamCode || '';
+                document.getElementById('playerName').value = config.playerName || '';
+            }
+        });
+
+        // Nettoyage
+        window.addEventListener('beforeunload', () => {
+            if (watchId) navigator.geolocation.clearWatch(watchId);
+            if (team
