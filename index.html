@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#1a1a1a">
+    <title>Airsoft Tactical Pro</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; background: #000; color: #00ff00; overflow: hidden; }
+        
+        .setup-screen {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: #000; display: flex; justify-content: center; align-items: center;
+            z-index: 10000;
+        }
+        
+        .setup-box {
+            background: #1a1a1a; padding: 30px; border-radius: 15px;
+            border: 2px solid #00ff00; text-align: center; max-width: 90%;
+            box-shadow: 0 0 30px rgba(0, 255, 0, 0.5);
+        }
+        
+        .setup-box h1 { margin-bottom: 20px; font-size: 24px; }
+        .setup-box input {
+            width: 100%; padding: 12px; margin: 10px 0;
+            background: #333; border: 2px solid #00ff00; color: #00ff00;
+            border-radius: 8px; font-size: 16px;
+        }
+        
+        .setup-box button {
+            padding: 15px 30px; background: #00ff00; color: #000;
+            border: none; border-radius: 8px; cursor: pointer;
+            font-weight: bold; font-size: 16px; margin-top: 15px;
+        }
+        
+        #map { width: 100%; height: 100vh; }
+        
+        .hud {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; z-index: 1000;
+        }
+        
+        .status {
+            position: absolute; top: 10px; right: 10px;
+            background: rgba(0, 0, 0, 0.8); padding: 8px; border-radius: 6px;
+            border: 1px solid #00ff00; pointer-events: auto; font-size: 10px;
+            display: flex; gap: 10px;
+        }
+        
+        .status-item {
+            display: flex; align-items: center; gap: 3px;
+        }
+        
+        .layers {
+            position: absolute; top: 10px; left: 10px;
+            background: rgba(0, 0, 0, 0.8); border: 1px solid #00ff00;
+            border-radius: 6px; padding: 5px; pointer-events: auto;
+            display: flex; gap: 5px;
+        }
+        
+        .layer-btn {
+            padding: 5px 10px;
+            background: rgba(0, 0, 0, 0.8); border: 1px solid #00ff00;
+            color: #00ff00; border-radius: 4px; cursor: pointer; font-size: 10px;
+        }
+        
+        .layer-btn.active { background: rgba(0, 255, 0, 0.3); }
+        
+        .controls-bottom {
+            position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+            display: flex; gap: 8px; pointer-events: auto;
+            background: rgba(0, 0, 0, 0.8); padding: 8px; border-radius: 20px;
+            border: 1px solid #00ff00;
+        }
+        
+        .btn {
+            padding: 8px 12px; background: rgba(0, 0, 0, 0.9);
+            border: 1px solid #00ff00; color: #00ff00; border-radius: 15px;
+            cursor: pointer; font-weight: bold; font-size: 10px;
+            transition: all 0.3s;
+        }
+        
+        .btn:hover { background: rgba(0, 255, 0, 0.2); }
+        .btn.active { background: rgba(255, 0, 0, 0.8); border-color: #ff0000; color: #fff; }
+        
+        .draw-panel {
+            position: absolute; bottom: 60px; left: 50%; transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.9); border: 1px solid #00ff00;
+            border-radius: 15px; padding: 8px; pointer-events: auto;
+            display: none;
+        }
+        
+        .draw-panel.show { display: flex; gap: 5px; align-items: center; }
+        
+        .color-picker { display: flex; gap: 4px; margin: 0 5px; }
+        .color { 
+            width: 14px; height: 14px; border-radius: 50%;
+            border: 1px solid #fff; cursor: pointer;
+        }
+        .color.active { border-color: #00ff00; box-shadow: 0 0 8px currentColor; }
+        
+        .hidden { display: none !important; }
+        
+        .loading {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9); padding: 20px; border-radius: 8px;
+            border: 2px solid #00ff00; z-index: 9999; text-align: center;
+        }
+        
+        .notification {
+            position: fixed; top: 60px; right: 10px; z-index: 2000;
+            background: rgba(0, 255, 0, 0.9); color: #000; padding: 8px 15px;
+            border-radius: 15px; font-weight: bold; font-size: 11px;
+            animation: slideIn 0.3s ease;
+        }
+        
+        /* Marqueurs au-dessus des obstacles */
+        .leaflet-marker-pane { z-index: 600 !important; }
+        .leaflet-popup-pane { z-index: 700 !important; }
+        
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <div class="setup-screen" id="setupScreen">
+        <div class="setup-box">
+            <h1>🎯 AIRSOFT TACTICAL</h1>
+            
+            <input type="text" id="teamCode" placeholder="Code équipe (ex: ALPHA)" maxlength="15">
+            <input type="text" id="playerName" placeholder="Votre indicatif (ex: LEADER)" maxlength="10">
+            
+            <button onclick="startApp()">🚀 DÉMARRER MISSION</button>
+        </div>
+    </div>
+
+    <div class="loading hidden" id="loadingScreen">
+        <div>📡 Connexion...</div>
+        <div id="loadingStatus" style="font-size: 12px; margin-top: 10px;">Initialisation</div>
+    </div>
+
+    <div id="map" class="hidden"></div>
+
+    <div class="hud hidden" id="gameHUD">
+        <div class="status">
+            <div class="status-item" id="firebaseStatus">🔥OFF</div>
+            <div class="status-item" id="gpsStatus">📍OFF</div>
+            <div class="status-item" id="teamStatus">👥0</div>
+        </div>
+
+        <div class="layers">
+            <button class="layer-btn active" onclick="switchLayer('standard')" id="standardBtn">Standard</button>
+            <button class="layer-btn" onclick="switchLayer('satellite')" id="satelliteBtn">Satellite</button>
+            <button class="layer-btn" onclick="switchLayer('tactical')" id="tacticalBtn">Tactique</button>
+        </div>
+
+        <div class="controls-bottom">
+            <button class="btn" onclick="centerPlayer()">📍</button>
+            <button class="btn" id="enemyBtn" onclick="toggleEnemy()">🎯</button>
+            <button class="btn" id="drawBtn" onclick="toggleDraw()">✏️</button>
+            <button class="btn" onclick="clearObstacles()">🗑️</button>
+            <button class="btn" onclick="showSetup()">⚙️</button>
+        </div>
+
+        <div class="draw-panel" id="drawPanel">
+            <button class="btn active" onclick="setDrawMode('rectangle')" style="padding: 4px 8px;">▭</button>
+            <button class="btn" onclick="setDrawMode('circle')" style="padding: 4px 8px;">○</button>
+            <div class="color-picker">
+                <div class="color active" style="background: #ff4444;" onclick="setColor('#ff4444')"></div>
+                <div class="color" style="background: #ffaa00;" onclick="setColor('#ffaa00')"></div>
+                <div class="color" style="background: #00ff00;" onclick="setColor('#00ff00')"></div>
+                <div class="color" style="background: #0080ff;" onclick="setColor('#0080ff')"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script type="module">
+        // Import Firebase
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+        import { getDatabase, ref, set, onValue, remove, onDisconnect } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js';
+
+        // Variables globales
+        let map, layers = {}, playerMarker, teammateMarkers = {};
+        let obstacleGroup, database, teamRef, obstacleRef;
+        let currentPosition, watchId, isConnected = false;
+        let enemyMode = false, drawMode = false, currentDrawMode = 'rectangle', currentColor = '#ff4444';
+        let teamCode, playerName;
+        let isDrawing = false, drawStartPoint = null, previewLayer = null;
+        let enemyMarkers = [];
+
+        // Configuration Firebase
+        const firebaseConfig = {
+            apiKey: "AIzaSyCVhcOgKGV5e_S8WZ6sNgT0qGXNhJDFQnY",
+            authDomain: "airsoft-tactical.firebaseapp.com",
+            databaseURL: "https://airsoft-tactical-default-rtdb.europe-west1.firebasedatabase.app",
+            projectId: "airsoft-tactical",
+            storageBucket: "airsoft-tactical.appspot.com",
+            messagingSenderId: "123456789",
+            appId: "1:123456789:web:abc123def456"
+        };
+
+        // Exposer les fonctions globalement
+        window.startApp = startApp;
+        window.switchLayer = switchLayer;
+        window.centerPlayer = centerPlayer;
+        window.toggleEnemy = toggleEnemy;
+        window.toggleDraw = toggleDraw;
+        window.setDrawMode = setDrawMode;
+        window.setColor = setColor;
+        window.clearObstacles = clearObstacles;
+        window.showSetup = showSetup;
+        window.removeObstacle = removeObstacle;
+
+        function startApp() {
+            teamCode = document.getElementById('teamCode').value.trim().toUpperCase();
+            playerName = document.getElementById('playerName').value.trim().toUpperCase();
+
+            if (!teamCode || !playerName) {
+                alert('Veuillez remplir tous les champs');
+                return;
+            }
+
+            localStorage.setItem('airsoftConfig', JSON.stringify({teamCode, playerName}));
+
+            document.getElementById('setupScreen').classList.add('hidden');
+            document.getElementById('loadingScreen').classList.remove('hidden');
+
+            initFirebase();
+        }
+
+        function initFirebase() {
+            updateLoading('Connexion...');
+            
+            try {
+                const app = initializeApp(firebaseConfig);
+                database = getDatabase(app);
+                
+                const connectedRef = ref(database, '.info/connected');
+                onValue(connectedRef, (snapshot) => {
+                    isConnected = snapshot.val() === true;
+                    updateStatus('firebaseStatus', isConnected ? '🔥ON' : '🔥OFF');
+                    
+                    if (isConnected && !teamRef) {
+                        setupTeam();
+                    }
+                });
+                
+            } catch (error) {
+                console.error('Erreur Firebase:', error);
+                setupOfflineMode();
+            }
+        }
+
+        function setupTeam() {
+            updateLoading('Configuration équipe...');
+            
+            teamRef = ref(database, `teams/${teamCode}`);
+            obstacleRef = ref(database, `obstacles/${teamCode}`);
+            
+            const playerRef = ref(database, `teams/${teamCode}/${playerName}`);
+            onDisconnect(playerRef).remove();
+            
+            onValue(teamRef, updateTeam);
+            onValue(obstacleRef, updateObstacles);
+            
+            initMap();
+        }
+
+        function setupOfflineMode() {
+            updateLoading('Mode hors ligne...');
+            notify('Mode hors ligne activé');
+            initMap();
+        }
+
+        function initMap() {
+            updateLoading('Chargement carte...');
+            
+            map = L.map('map', {
+                center: [48.8566, 2.3522],
+                zoom: 15,
+                zoomControl: false,
+                attributionControl: false
+            });
+
+            // Couche Standard (OpenStreetMap)
+            layers.standard = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19
+            });
+
+            // Couche Satellite (ESRI)
+            layers.satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                maxZoom: 19
+            });
+
+            // Couche Tactique (CartoDB Dark Matter)
+            layers.tactical = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                maxZoom: 19
+            });
+
+            // Ajouter la couche standard par défaut
+            layers.standard.addTo(map);
+
+            // Groupe d'obstacles
+            obstacleGroup = L.layerGroup().addTo(map);
+            
+            // Événements
+            map.on('click', onMapClick);
+            map.on('mousemove', onMouseMove);
+            
+            startGPS();
+        }
+
+        function startGPS() {
+            updateLoading('Activation GPS...');
+            
+            if (!navigator.geolocation) {
+                onGPSError();
+                return;
+            }
+
+            const options = { 
+                enableHighAccuracy: true, 
+                maximumAge: 5000, 
+                timeout: 10000 
+            };
+            
+            navigator.geolocation.getCurrentPosition(onGPS, onGPSError, options);
+            watchId = navigator.geolocation.watchPosition(onGPS, onGPSError, options);
+        }
+
+        function onGPS(position) {
+            currentPosition = {
+                lat: position.coords.latitude,
+                lng: position.coords.longitude,
+                accuracy: Math.round(position.coords.accuracy),
+                timestamp: Date.now()
+            };
+
+            updateStatus('gpsStatus', '📍ON');
+            updatePlayerMarker();
+            sharePosition();
+
+            if (document.getElementById('map').classList.contains('hidden')) {
+                showMap();
+            }
+        }
+
+        function onGPSError(error) {
+            updateStatus('gpsStatus', '📍OFF');
+            
+            // Position de démo
+            currentPosition = {
+                lat: 48.8566 + (Math.random() - 0.5) * 0.01,
+                lng: 2.3522 + (Math.random() - 0.5) * 0.01,
+                accuracy: 999,
+                timestamp: Date.now()
+            };
+            
+            updatePlayerMarker();
+            showMap();
+            notify('GPS indisponible - Mode démo');
+        }
+
+        function showMap() {
+            document.getElementById('loadingScreen').classList.add('hidden');
+            document.getElementById('map').classList.remove('hidden');
+            document.getElementById('gameHUD').classList.remove('hidden');
+            centerPlayer();
+            map.invalidateSize();
+        }
+
+        function updatePlayerMarker() {
+            if (!map || !currentPosition) return;
+            
+            if (playerMarker) map.removeLayer(playerMarker);
+            
+            const icon = L.divIcon({
+                className: '',
+                html: `<div style="width: 20px; height: 20px; background: #0080ff; border: 3px solid #fff; border-radius: 50%; box-shadow: 0 0 15px #0080ff;"></div>`,
+                iconSize: [20, 20],
+                iconAnchor: [10, 10]
+            });
+            
+            playerMarker = L.marker([currentPosition.lat, currentPosition.lng], {icon, zIndexOffset: 1000}).addTo(map);
+            playerMarker.bindPopup(`<b>${playerName}</b><br>Équipe: ${teamCode}`);
+        }
+
+        function sharePosition() {
+            if (!database || !currentPosition || !isConnected) return;
+            
+            const playerRef = ref(database, `teams/${teamCode}/${playerName}`);
+            set(playerRef, {
+                lat: currentPosition.lat,
+                lng: currentPosition.lng,
+                accuracy: currentPosition.accuracy,
+                timestamp: currentPosition.timestamp
+            });
+        }
+
+        function updateTeam(snapshot) {
+            const data = snapshot.val();
+            if (!data) return;
+            
+            const members = Object.keys(data);
+            updateStatus('teamStatus', `👥${members.length}`);
+            
+            members.forEach(id => {
+                if (id === playerName) return;
+                
+                const member = data[id];
+                if (!member.lat || !member.lng) return;
+                
+                if (teammateMarkers[id]) map.removeLayer(teammateMarkers[id]);
+                
+                const icon = L.divIcon({
+                    className: '',
+                    html: `
+                        <div style="display: flex; flex-direction: column; align-items: center;">
+                            <div style="width: 16px; height: 16px; background: #00ff00; border: 2px solid #fff; border-radius: 50%;"></div>
+                            <div style="background: rgba(0,0,0,0.7); color: #00ff00; padding: 2px 4px; border-radius: 8px; font-size: 9px; font-weight: bold; margin-top: 2px;">
+                                ${id}
+                            </div>
+                        </div>
+                    `,
+                    iconSize: [50, 30],
+                    iconAnchor: [25, 15]
+                });
+                
+                teammateMarkers[id] = L.marker([member.lat, member.lng], {icon}).addTo(map);
+            });
+        }
+
+        function updateObstacles(snapshot) {
+            const data = snapshot.val();
+            obstacleGroup.clearLayers();
+            
+            if (!data) return;
+            
+            Object.keys(data).forEach(id => {
+                const obs = data[id];
+                let layer;
+                
+                if (obs.type === 'rectangle' && obs.bounds) {
+                    layer = L.rectangle([
+                        [obs.bounds.south, obs.bounds.west],
+                        [obs.bounds.north, obs.bounds.east]
+                    ], {
+                        color: obs.color || '#ff4444',
+                        weight: 2,
+                        fillOpacity: 0.3
+                    });
+                } else if (obs.type === 'circle' && obs.center && obs.radius) {
+                    layer = L.circle([obs.center.lat, obs.center.lng], {
+                        radius: obs.radius,
+                        color: obs.color || '#ff4444',
+                        weight: 2,
+                        fillOpacity: 0.3
+                    });
+                }
+                
+                if (layer) {
+                    layer._obstacleId = id;
+                    layer.bindPopup(`
+                        <b>${obs.type}</b><br>
+                        Par: ${obs.createdBy}<br>
+                        <button onclick="removeObstacle('${id}')" style="background: #ff4444; color: white; border: none; padding: 3px 8px; border-radius: 3px; cursor: pointer;">
+                            Supprimer
+                        </button>
+                    `);
+                    obstacleGroup.addLayer(layer);
+                }
+            });
+        }
+
+        function switchLayer(type) {
+            Object.keys(layers).forEach(layerName => {
+                if (map.hasLayer(layers[layerName])) {
+                    map.removeLayer(layers[layerName]);
+                }
+            });
+            
+            if (layers[type]) {
+                layers[type].addTo(map);
+                document.querySelectorAll('.layer-btn').forEach(btn => btn.classList.remove('active'));
+                document.getElementById(type + 'Btn').classList.add('active');
+                notify(`Carte: ${type}`);
+            }
+        }
+
+        function centerPlayer() {
+            if (currentPosition) {
+                map.setView([currentPosition.lat, currentPosition.lng], 17, {animate: true});
+                notify('Position centrée');
+            }
+        }
+
+        function toggleEnemy() {
+            if (drawMode) toggleDraw();
+            
+            enemyMode = !enemyMode;
+            const btn = document.getElementById('enemyBtn');
+            
+            if (enemyMode) {
+                btn.classList.add('active');
+                map.getContainer().style.cursor = 'crosshair';
+                notify('Mode ennemi activé');
+            } else {
+                btn.classList.remove('active');
+                map.getContainer().style.cursor = '';
+            }
+        }
+
+        function toggleDraw() {
+            if (enemyMode) toggleEnemy();
+            
+            drawMode = !drawMode;
+            const btn = document.getElementById('drawBtn');
+            const panel = document.getElementById('drawPanel');
+            
+            if (drawMode) {
+                btn.classList.add('active');
+                panel.classList.add('show');
+                map.getContainer().style.cursor = 'crosshair';
+                notify('Mode dessin activé');
+            } else {
+                btn.classList.remove('active');
+                panel.classList.remove('show');
+                map.getContainer().style.cursor = '';
+                cancelDrawing();
+            }
+        }
+
+        function setDrawMode(mode) {
+            currentDrawMode = mode;
+            cancelDrawing();
+            
+            document.querySelectorAll('#drawPanel .btn').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+        }
+
+        function setColor(color) {
+            currentColor = color;
+            document.querySelectorAll('.color').forEach(c => c.classList.remove('active'));
+            event.target.classList.add('active');
+        }
+
+        function onMapClick(e) {
+            if (enemyMode) {
+                addEnemyMarker(e.latlng);
+                toggleEnemy();
+            } else if (drawMode) {
+                if (!isDrawing) {
+                    startDrawing(e.latlng);
+                } else {
+                    finishDrawing(e.latlng);
+                }
+            }
+        }
+
+        function onMouseMove(e) {
+            if (drawMode && isDrawing && drawStartPoint) {
+                updateDrawPreview(e.latlng);
+            }
+        }
+
+        function startDrawing(latlng) {
+            isDrawing = true;
+            drawStartPoint = latlng;
+        }
+
+        function updateDrawPreview(latlng) {
+            if (previewLayer) {
+                map.removeLayer(previewLayer);
+            }
+            
+            if (currentDrawMode === 'rectangle') {
+                previewLayer = L.rectangle([drawStartPoint, latlng], {
+                    color: currentColor,
+                    weight: 1,
+                    fillOpacity: 0.1,
+                    dashArray: '5, 5'
+                });
+            } else if (currentDrawMode === 'circle') {
+                const radius = map.distance(drawStartPoint, latlng);
+                previewLayer = L.circle(drawStartPoint, {
+                    radius: radius,
+                    color: currentColor,
+                    weight: 1,
+                    fillOpacity: 0.1,
+                    dashArray: '5, 5'
+                });
+            }
+            
+            if (previewLayer) {
+                map.addLayer(previewLayer);
+            }
+        }
+
+        function finishDrawing(latlng) {
+            if (previewLayer) {
+                map.removeLayer(previewLayer);
+                previewLayer = null;
+            }
+            
+            const obstacleId = 'obs_' + Date.now();
+            let obstacleData = {
+                type: currentDrawMode,
+                color: currentColor,
+                createdBy: playerName,
+                timestamp: Date.now()
+            };
+            
+            let finalLayer;
+            
+            if (currentDrawMode === 'rectangle') {
+                const bounds = L.latLngBounds(drawStartPoint, latlng);
+                obstacleData.bounds = {
+                    north: bounds.getNorth(),
+                    south: bounds.getSouth(),
+                    east: bounds.getEast(),
+                    west: bounds.getWest()
+                };
+                
+                finalLayer = L.rectangle(bounds, {
+                    color: currentColor,
+                    weight: 2,
+                    fillOpacity: 0.3
+                });
+            } else if (currentDrawMode === 'circle') {
+                const radius = map.distance(drawStartPoint, latlng);
+                obstacleData.center = {lat: drawStartPoint.lat, lng: drawStartPoint.lng};
+                obstacleData.radius = radius;
+                
+                finalLayer = L.circle(drawStartPoint, {
+                    radius: radius,
+                    color: currentColor,
+                    weight: 2,
+                    fillOpacity: 0.3
+                });
+            }
+            
+            if (finalLayer) {
+                finalLayer._obstacleId = obstacleId;
+                finalLayer.bindPopup(`
+                    <b>${currentDrawMode}</b><br>
+                    Par: ${playerName}<br>
+                    <button onclick="removeObstacle('${obstacleId}')" style="background: #ff4444; color: white; border: none; padding: 3px 8px; border-radius: 3px; cursor: pointer;">
+                        Supprimer
+                    </button>
+                `);
+                obstacleGroup.addLayer(finalLayer);
+                
+                if (database && isConnected) {
+                    const obsRef = ref(database, `obstacles/${teamCode}/${obstacleId}`);
+                    set(obsRef, obstacleData);
+                }
+                
+                notify('Obstacle créé');
+            }
+            
+            cancelDrawing();
+        }
+
+        function cancelDrawing() {
+            if (previewLayer) {
+                map.removeLayer(previewLayer);
+                previewLayer = null;
+            }
+            isDrawing = false;
+            drawStartPoint = null;
+        }
+
+        function addEnemyMarker(latlng) {
+            const icon = L.divIcon({
+                className: '',
+                html: `<div style="width: 20px; height: 20px; background: #ff4444; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 10px #ff4444; animation: pulse 1s infinite;">
+                    <div style="position: absolute; top: -15px; left: 50%; transform: translateX(-50%); background: #ff4444; color: white; padding: 2px 5px; border-radius: 3px; font-size: 9px; white-space: nowrap;">ENNEMI</div>
+                </div>
+                <style>@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }</style>`,
+                iconSize: [20, 20],
+                iconAnchor: [10, 10]
+            });
+            
+            const marker = L.marker([latlng.lat, latlng.lng], {icon, zIndexOffset: 999}).addTo(map);
+            marker.bindPopup(`⚠️ Ennemi signalé<br>Par: ${playerName}`);
+            
+            enemyMarkers.push(marker);
+            
+            // Disparition après 30 secondes
+            setTimeout(() => {
+                if (map.hasLayer(marker)) {
+                    map.removeLayer(marker);
+                    const index = enemyMarkers.indexOf(marker);
+                    if (index > -1) enemyMarkers.splice(index, 1);
+                }
+            }, 30000);
+            
+            notify('Ennemi marqué (30s)');
+            
+            if (navigator.vibrate) navigator.vibrate(200);
+        }
+
+        function clearObstacles() {
+            if (confirm('Effacer tous les obstacles ?')) {
+                if (database && isConnected) {
+                    const obsRef = ref(database, `obstacles/${teamCode}`);
+                    remove(obsRef);
+                }
+                obstacleGroup.clearLayers();
+                notify('Obstacles effacés');
+            }
+        }
+
+        function removeObstacle(id) {
+            if (database && isConnected) {
+                const obsRef = ref(database, `obstacles/${teamCode}/${id}`);
+                remove(obsRef);
+            }
+            
+            obstacleGroup.eachLayer(layer => {
+                if (layer._obstacleId === id) {
+                    obstacleGroup.removeLayer(layer);
+                }
+            });
+            
+            notify('Obstacle supprimé');
+        }
+
+        function showSetup() {
+            document.getElementById('setupScreen').classList.remove('hidden');
+            document.getElementById('map').classList.add('hidden');
+            document.getElementById('gameHUD').classList.add('hidden');
+        }
+
+        function updateLoading(text) {
+            document.getElementById('loadingStatus').textContent = text;
+        }
+
+        function updateStatus(id, text) {
+            const element = document.getElementById(id);
+            if (element) element.textContent = text;
+        }
+
+        function notify(message) {
+            const notif = document.createElement('div');
+            notif.className = 'notification';
+            notif.textContent = message;
+            document.body.appendChild(notif);
+            
+            setTimeout(() => {
+                if (document.body.contains(notif)) {
+                    notif.remove();
+                }
+            }, 3000);
+        }
+
+        // Charger config sauvegardée
+        window.addEventListener('load', () => {
+            const saved = localStorage.getItem('airsoftConfig');
+            if (saved) {
+                const config = JSON.parse(saved);
+                document.getElementById('teamCode').value = config.teamCode || '';
+                document.getElementById('playerName').value = config.playerName || '';
+            }
+        });
+
+        // Nettoyage
+        window.addEventListener('beforeunload', () => {
+            if (watchId) navigator.geolocation.clearWatch(watchId);
+            if (database && playerName && teamCode && isConnected) {
+                const playerRef = ref(database, `teams/${teamCode}/${playerName}`);
+                remove(playerRef);
+            }
+        });
+
+        // Partage position régulier
+        setInterval(() => {
+            if (currentPosition && isConnected) {
+                sharePosition();
+            }
+        }, 5000);
+
+        console.log('🎯 Airsoft Tactical Pro - Version simplifiée');
+    </script>
+</body>
+</html>
