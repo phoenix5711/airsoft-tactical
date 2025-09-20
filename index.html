@@ -115,6 +115,30 @@
             animation: slideIn 0.3s ease;
         }
         
+        .qr-modal {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.9); display: none; justify-content: center; align-items: center;
+            z-index: 15000;
+        }
+        
+        .qr-content {
+            background: #1a1a1a; padding: 30px; border-radius: 15px;
+            border: 2px solid #00ff00; text-align: center;
+            box-shadow: 0 0 30px rgba(0, 255, 0, 0.5);
+        }
+        
+        .qr-content h3 { margin-bottom: 20px; }
+        .qr-content img { margin: 20px 0; border: 2px solid #00ff00; }
+        .qr-content button {
+            padding: 10px 20px; background: #00ff00; color: #000;
+            border: none; border-radius: 8px; cursor: pointer;
+            font-weight: bold; margin: 10px;
+        }
+        
+        /* Ennemis au-dessus des obstacles */
+        .leaflet-marker-pane { z-index: 600 !important; }
+        .leaflet-popup-pane { z-index: 700 !important; }
+        
         @keyframes slideIn {
             from { transform: translateX(100%); opacity: 0; }
             to { transform: translateX(0); opacity: 1; }
@@ -126,15 +150,6 @@
         <div class="setup-box">
             <h1>🎯 AIRSOFT TACTICAL</h1>
             
-            <div class="firebase-info">
-                <strong>Firebase requis :</strong><br>
-                1. <a href="https://console.firebase.google.com" target="_blank" style="color: #00ff00;">console.firebase.google.com</a><br>
-                2. Créer projet → Realtime Database<br>
-                3. Règles → Mode test (30 jours)
-            </div>
-            
-            <input type="text" id="firebaseUrl" placeholder="URL Firebase" 
-                   value="https://airsoft-tactical-default-rtdb.europe-west1.firebasedatabase.app/">
             <input type="text" id="teamCode" placeholder="Code équipe (ex: ALPHA)" maxlength="15">
             <input type="text" id="playerName" placeholder="Votre indicatif (ex: LEADER)" maxlength="10">
             
@@ -201,12 +216,13 @@
 
         // Fonction principale
         function startApp() {
-            firebaseUrl = document.getElementById('firebaseUrl').value.trim();
+            // URL Firebase fixe pour tous
+            firebaseUrl = "https://airsoft-tactical-default-rtdb.europe-west1.firebasedatabase.app/";
             teamCode = document.getElementById('teamCode').value.trim().toUpperCase();
             playerName = document.getElementById('playerName').value.trim().toUpperCase();
 
-            if (!firebaseUrl || !teamCode || !playerName) {
-                alert('Veuillez remplir tous les champs');
+            if (!teamCode || !playerName) {
+                alert('Veuillez remplir le code équipe et votre indicatif');
                 return;
             }
 
@@ -517,13 +533,25 @@
                 
                 try {
                     if (obs.type === 'rectangle' && obs.bounds) {
-                        layer = L.rectangle(obs.bounds, {
+                        // Reconstruire les bounds depuis Firebase
+                        let bounds;
+                        if (obs.bounds._southWest && obs.bounds._northEast) {
+                            bounds = L.latLngBounds(
+                                [obs.bounds._southWest.lat, obs.bounds._southWest.lng],
+                                [obs.bounds._northEast.lat, obs.bounds._northEast.lng]
+                            );
+                        } else {
+                            bounds = L.latLngBounds(obs.bounds);
+                        }
+                        
+                        layer = L.rectangle(bounds, {
                             color: obs.color || '#ff4444', 
                             weight: 3, 
                             fillOpacity: 0.3
                         });
                     } else if (obs.type === 'circle' && obs.center && obs.radius) {
-                        layer = L.circle(obs.center, {
+                        const center = obs.center.lat ? [obs.center.lat, obs.center.lng] : obs.center;
+                        layer = L.circle(center, {
                             radius: obs.radius,
                             color: obs.color || '#ff4444', 
                             weight: 3, 
@@ -537,7 +565,7 @@
                         // Calculer la taille pour l'affichage
                         let sizeText = '';
                         if (obs.type === 'rectangle' && obs.bounds) {
-                            const bounds = L.latLngBounds(obs.bounds);
+                            const bounds = layer.getBounds();
                             const sizeM = Math.round(map.distance(bounds.getNorthEast(), bounds.getSouthWest()));
                             sizeText = `(~${sizeM}m)`;
                         } else if (obs.type === 'circle' && obs.radius) {
@@ -554,7 +582,7 @@
                         obstacleGroup.addLayer(layer);
                     }
                 } catch (error) {
-                    console.error('Erreur obstacle:', error);
+                    console.error('Erreur obstacle:', error, obs);
                 }
             });
         }
@@ -563,7 +591,7 @@
             console.log(`Changement vers couche: ${type}`);
             
             // Supprimer toutes les couches existantes
-            Object.keys(layers).forEach(layerName => {
+            ['osm', 'satellite', 'tactical'].forEach(layerName => {
                 if (layers[layerName] && map.hasLayer(layers[layerName])) {
                     map.removeLayer(layers[layerName]);
                     console.log(`Couche ${layerName} supprimée`);
@@ -581,7 +609,6 @@
                 
                 // Gestion spéciale pour la couche tactique
                 if (type === 'tactical') {
-                    // Forcer un redraw pour la couche canvas
                     setTimeout(() => {
                         map.invalidateSize();
                     }, 100);
@@ -753,8 +780,12 @@
             let finalLayer;
             
             if (currentDrawMode === 'rectangle') {
-                const bounds = L.latLngBounds([drawStartPoint, latlng]);
-                obstacleData.bounds = bounds;
+                // Créer les bounds correctement
+                const bounds = L.latLngBounds(drawStartPoint, latlng);
+                obstacleData.bounds = {
+                    _southWest: {lat: bounds.getSouth(), lng: bounds.getWest()},
+                    _northEast: {lat: bounds.getNorth(), lng: bounds.getEast()}
+                };
                 
                 finalLayer = L.rectangle(bounds, {
                     color: currentColor,
@@ -763,7 +794,7 @@
                 });
             } else if (currentDrawMode === 'circle') {
                 const radius = map.distance(drawStartPoint, latlng);
-                obstacleData.center = drawStartPoint;
+                obstacleData.center = {lat: drawStartPoint.lat, lng: drawStartPoint.lng};
                 obstacleData.radius = radius;
                 
                 finalLayer = L.circle(drawStartPoint, {
@@ -864,6 +895,56 @@
             map.invalidateSize();
             notify('Test des couches - Voir console (F12)');
         }
+        
+        function showQRCode() {
+            if (!teamCode) {
+                notify('Aucune équipe active');
+                return;
+            }
+            
+            // Générer l'URL de partage
+            const shareUrl = window.location.origin + window.location.pathname + '?team=' + encodeURIComponent(teamCode);
+            
+            // Générer le QR code via API
+            const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(shareUrl)}`;
+            
+            document.getElementById('qrImage').src = qrUrl;
+            document.getElementById('qrTeamCode').textContent = teamCode;
+            document.getElementById('qrModal').style.display = 'flex';
+        }
+        
+        function closeQRModal() {
+            document.getElementById('qrModal').style.display = 'none';
+        }
+        
+        function copyTeamLink() {
+            const shareUrl = window.location.origin + window.location.pathname + '?team=' + encodeURIComponent(teamCode);
+            
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(shareUrl).then(() => {
+                    notify('Lien copié dans le presse-papier !');
+                }).catch(() => {
+                    fallbackCopyText(shareUrl);
+                });
+            } else {
+                fallbackCopyText(shareUrl);
+            }
+        }
+        
+        function fallbackCopyText(text) {
+            // Fallback pour les navigateurs qui ne supportent pas clipboard API
+            const textArea = document.createElement('textarea');
+            textArea.value = text;
+            document.body.appendChild(textArea);
+            textArea.select();
+            try {
+                document.execCommand('copy');
+                notify('Lien copié !');
+            } catch (err) {
+                notify('Erreur de copie - Partagez manuellement : ' + text);
+            }
+            document.body.removeChild(textArea);
+        }
 
         function updateLoading(text) {
             document.getElementById('loadingStatus').textContent = text;
@@ -884,17 +965,32 @@
             }, 3000);
         }
 
-        // Fonction globale pour les popups
+        // Fonctions globales pour les popups et modals
         window.removeObstacle = removeObstacle;
+        window.closeQRModal = closeQRModal;
+        window.copyTeamLink = copyTeamLink;
 
-        // Charger config sauvegardée
+        // Charger config sauvegardée et gérer les liens partagés
         window.addEventListener('load', () => {
-            const saved = localStorage.getItem('airsoftConfig');
-            if (saved) {
-                const config = JSON.parse(saved);
-                document.getElementById('firebaseUrl').value = config.firebaseUrl || '';
-                document.getElementById('teamCode').value = config.teamCode || '';
-                document.getElementById('playerName').value = config.playerName || '';
+            // Vérifier s'il y a un paramètre team dans l'URL
+            const urlParams = new URLSearchParams(window.location.search);
+            const sharedTeam = urlParams.get('team');
+            
+            if (sharedTeam) {
+                // Lien partagé détecté
+                document.getElementById('teamCode').value = sharedTeam;
+                notify('Équipe détectée : ' + sharedTeam);
+                
+                // Nettoyer l'URL
+                window.history.replaceState({}, document.title, window.location.pathname);
+            } else {
+                // Charger la config sauvegardée normalement
+                const saved = localStorage.getItem('airsoftConfig');
+                if (saved) {
+                    const config = JSON.parse(saved);
+                    document.getElementById('teamCode').value = config.teamCode || '';
+                    document.getElementById('playerName').value = config.playerName || '';
+                }
             }
         });
 
