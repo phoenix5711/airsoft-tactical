@@ -161,7 +161,6 @@
             <div style="font-size: 10px; font-weight: bold; margin-bottom: 5px; text-align: center;">CARTES</div>
             <button class="layer-btn active" onclick="switchLayer('osm')" id="osmBtn">Standard</button>
             <button class="layer-btn" onclick="switchLayer('satellite')" id="satelliteBtn">Satellite</button>
-            <button class="layer-btn" onclick="switchLayer('topo')" id="topoBtn">Topo</button>
             <button class="layer-btn" onclick="switchLayer('tactical')" id="tacticalBtn">Tactique</button>
         </div>
 
@@ -174,8 +173,8 @@
         </div>
 
         <div class="draw-panel" id="drawPanel">
-            <span style="font-size: 10px; font-weight: bold;">DESSIN:</span>
-            <button class="btn" onclick="setDrawMode('rectangle')" style="padding: 4px 8px; font-size: 10px;">RECT</button>
+            <span style="font-size: 10px; font-weight: bold;">DESSINER:</span>
+            <button class="btn active" onclick="setDrawMode('rectangle')" style="padding: 4px 8px; font-size: 10px;">RECTANGLE</button>
             <button class="btn" onclick="setDrawMode('circle')" style="padding: 4px 8px; font-size: 10px;">CERCLE</button>
             <div class="color-picker">
                 <div class="color active" style="background: #ff4444;" onclick="setColor('#ff4444')"></div>
@@ -198,6 +197,7 @@
         let currentPosition, watchId, isConnected = false;
         let enemyMode = false, drawMode = false, currentDrawMode = 'rectangle', currentColor = '#ff4444';
         let teamCode, playerName, firebaseUrl;
+        let isDrawing = false, drawStartPoint = null, previewLayer = null;
 
         // Fonction principale
         function startApp() {
@@ -297,13 +297,6 @@
                 crossOrigin: true
             });
             
-            // Couche Topo alternative
-            layers.topo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
-                maxZoom: 17,
-                attribution: '',
-                crossOrigin: true
-            });
-            
             // Couche tactique simplifiée en Canvas
             layers.tactical = L.gridLayer({
                 maxZoom: 20,
@@ -347,10 +340,6 @@
                 console.warn('Erreur de chargement tuile OSM:', error);
                 notify('Connexion lente - Chargement en cours...');
             });
-            
-            layers.osm.on('tileload', function() {
-                console.log('Tuile OSM chargée avec succès');
-            });
 
             map.addLayer(layers.osm);
 
@@ -359,6 +348,7 @@
             
             // Événements
             map.on('click', onMapClick);
+            map.on('mousemove', onMouseMove);
             
             // Événement de chargement de la carte
             map.whenReady(function() {
@@ -526,15 +516,41 @@
                 let layer;
                 
                 try {
-                    if (obs.type === 'rectangle') {
-                        layer = L.rectangle(obs.bounds, {color: obs.color, weight: 3, fillOpacity: 0.3});
-                    } else if (obs.type === 'circle') {
-                        layer = L.circle(obs.center, {radius: obs.radius, color: obs.color, weight: 3, fillOpacity: 0.3});
+                    if (obs.type === 'rectangle' && obs.bounds) {
+                        layer = L.rectangle(obs.bounds, {
+                            color: obs.color || '#ff4444', 
+                            weight: 3, 
+                            fillOpacity: 0.3
+                        });
+                    } else if (obs.type === 'circle' && obs.center && obs.radius) {
+                        layer = L.circle(obs.center, {
+                            radius: obs.radius,
+                            color: obs.color || '#ff4444', 
+                            weight: 3, 
+                            fillOpacity: 0.3
+                        });
                     }
                     
                     if (layer) {
                         layer._obstacleId = id;
-                        layer.bindPopup(`<b>Obstacle ${obs.type}</b><br>Par: ${obs.createdBy}<br><button onclick="removeObstacle('${id}')" style="background: #ff4444; color: white; border: none; padding: 3px 8px; border-radius: 3px; cursor: pointer;">Supprimer</button>`);
+                        
+                        // Calculer la taille pour l'affichage
+                        let sizeText = '';
+                        if (obs.type === 'rectangle' && obs.bounds) {
+                            const bounds = L.latLngBounds(obs.bounds);
+                            const sizeM = Math.round(map.distance(bounds.getNorthEast(), bounds.getSouthWest()));
+                            sizeText = `(~${sizeM}m)`;
+                        } else if (obs.type === 'circle' && obs.radius) {
+                            sizeText = `(${Math.round(obs.radius)}m)`;
+                        }
+                        
+                        layer.bindPopup(`
+                            <b>Obstacle ${obs.type}</b> ${sizeText}<br>
+                            Par: ${obs.createdBy}<br>
+                            <button onclick="removeObstacle('${id}')" style="background: #ff4444; color: white; border: none; padding: 3px 8px; border-radius: 3px; cursor: pointer;">
+                                Supprimer
+                            </button>
+                        `);
                         obstacleGroup.addLayer(layer);
                     }
                 } catch (error) {
@@ -628,17 +644,24 @@
                 btn.classList.add('active');
                 panel.classList.add('show');
                 map.getContainer().style.cursor = 'crosshair';
-                notify('Mode dessin - Sélectionnez un outil');
+                notify('Mode dessin - Sélectionnez un outil et cliquez sur la carte');
             } else {
                 btn.classList.remove('active');
                 panel.classList.remove('show');
                 map.getContainer().style.cursor = '';
+                cancelDrawing(); // Annuler tout dessin en cours
             }
         }
 
         function setDrawMode(mode) {
             currentDrawMode = mode;
-            notify(`Outil: ${mode.toUpperCase()}`);
+            cancelDrawing(); // Annuler le dessin en cours si on change d'outil
+            
+            // Mettre à jour l'interface
+            document.querySelectorAll('#drawPanel .btn').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            notify(`Outil: ${mode.toUpperCase()} - Premier clic = début, deuxième clic = fin`);
         }
 
         function setColor(color) {
@@ -652,32 +675,130 @@
                 addEnemyMarker(e.latlng);
                 toggleEnemy();
             } else if (drawMode) {
-                const obstacleId = 'obs_' + Date.now();
-                let obstacleData = {
-                    type: currentDrawMode,
-                    color: currentColor,
-                    createdBy: playerName,
-                    timestamp: Date.now()
-                };
-
-                if (currentDrawMode === 'circle') {
-                    obstacleData.center = e.latlng;
-                    obstacleData.radius = 50;
+                if (!isDrawing) {
+                    // Premier clic : commencer le dessin
+                    startDrawing(e.latlng);
                 } else {
-                    const offset = 0.0005;
-                    obstacleData.bounds = [
-                        [e.latlng.lat - offset, e.latlng.lng - offset],
-                        [e.latlng.lat + offset, e.latlng.lng + offset]
-                    ];
+                    // Deuxième clic : terminer le dessin
+                    finishDrawing(e.latlng);
                 }
-
+            }
+        }
+        
+        function onMouseMove(e) {
+            if (drawMode && isDrawing && drawStartPoint) {
+                updateDrawPreview(e.latlng);
+            }
+        }
+        
+        function startDrawing(latlng) {
+            isDrawing = true;
+            drawStartPoint = latlng;
+            
+            if (currentDrawMode === 'rectangle') {
+                notify('Cliquez pour définir le coin opposé');
+            } else if (currentDrawMode === 'circle') {
+                notify('Cliquez pour définir la taille du cercle');
+            }
+        }
+        
+        function updateDrawPreview(latlng) {
+            // Supprimer l'ancien aperçu
+            if (previewLayer) {
+                map.removeLayer(previewLayer);
+                previewLayer = null;
+            }
+            
+            // Créer l'aperçu selon le type
+            if (currentDrawMode === 'rectangle') {
+                const bounds = L.latLngBounds([drawStartPoint, latlng]);
+                previewLayer = L.rectangle(bounds, {
+                    color: currentColor,
+                    weight: 2,
+                    fillOpacity: 0.2,
+                    dashArray: '5, 5'
+                });
+            } else if (currentDrawMode === 'circle') {
+                const radius = map.distance(drawStartPoint, latlng);
+                previewLayer = L.circle(drawStartPoint, {
+                    radius: radius,
+                    color: currentColor,
+                    weight: 2,
+                    fillOpacity: 0.2,
+                    dashArray: '5, 5'
+                });
+            }
+            
+            if (previewLayer) {
+                map.addLayer(previewLayer);
+            }
+        }
+        
+        function finishDrawing(latlng) {
+            // Supprimer l'aperçu
+            if (previewLayer) {
+                map.removeLayer(previewLayer);
+                previewLayer = null;
+            }
+            
+            // Créer l'obstacle final
+            const obstacleId = 'obs_' + Date.now();
+            let obstacleData = {
+                type: currentDrawMode,
+                color: currentColor,
+                createdBy: playerName,
+                timestamp: Date.now()
+            };
+            
+            let finalLayer;
+            
+            if (currentDrawMode === 'rectangle') {
+                const bounds = L.latLngBounds([drawStartPoint, latlng]);
+                obstacleData.bounds = bounds;
+                
+                finalLayer = L.rectangle(bounds, {
+                    color: currentColor,
+                    weight: 3,
+                    fillOpacity: 0.3
+                });
+            } else if (currentDrawMode === 'circle') {
+                const radius = map.distance(drawStartPoint, latlng);
+                obstacleData.center = drawStartPoint;
+                obstacleData.radius = radius;
+                
+                finalLayer = L.circle(drawStartPoint, {
+                    radius: radius,
+                    color: currentColor,
+                    weight: 3,
+                    fillOpacity: 0.3
+                });
+            }
+            
+            if (finalLayer) {
+                finalLayer._obstacleId = obstacleId;
+                finalLayer.bindPopup(`<b>Obstacle ${currentDrawMode}</b><br>Par: ${playerName}<br><button onclick="removeObstacle('${obstacleId}')" style="background: #ff4444; color: white; border: none; padding: 3px 8px; border-radius: 3px; cursor: pointer;">Supprimer</button>`);
+                obstacleGroup.addLayer(finalLayer);
+                
+                // Sauvegarder dans Firebase
                 if (obstacleRef) {
                     obstacleRef.child(obstacleId).set(obstacleData);
                 }
                 
-                notify('Obstacle ajouté');
-                toggleDraw();
+                notify(`Obstacle ${currentDrawMode} créé !`);
             }
+            
+            // Réinitialiser le dessin
+            isDrawing = false;
+            drawStartPoint = null;
+        }
+        
+        function cancelDrawing() {
+            if (previewLayer) {
+                map.removeLayer(previewLayer);
+                previewLayer = null;
+            }
+            isDrawing = false;
+            drawStartPoint = null;
         }
 
         function addEnemyMarker(latlng) {
