@@ -167,6 +167,7 @@
 
         <div class="controls-bottom">
             <button class="btn" onclick="centerPlayer()">📍 CENTRER</button>
+            <button class="btn" onclick="testLayers()">🔍 TEST</button>
             <button class="btn" id="enemyBtn" onclick="toggleEnemy()">🎯 ENNEMI</button>
             <button class="btn" id="drawBtn" onclick="toggleDraw()">✏️ DESSIN</button>
             <button class="btn" onclick="showSetup()">⚙️ CONFIG</button>
@@ -278,43 +279,79 @@
                 center: [48.8566, 2.3522],
                 zoom: 15,
                 zoomControl: false,
-                attributionControl: false
+                attributionControl: false,
+                preferCanvas: true
             });
 
-            // Initialiser les couches
+            // Couche Standard OpenStreetMap (fiable)
             layers.osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 maxZoom: 19,
-                attribution: ''
+                attribution: '',
+                crossOrigin: true
             });
             
-            layers.satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-                maxZoom: 19,
-                attribution: ''
+            // Couche Satellite alternative plus fiable
+            layers.satellite = L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+                maxZoom: 20,
+                attribution: '',
+                crossOrigin: true
             });
             
+            // Couche Topo alternative
             layers.topo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
                 maxZoom: 17,
+                attribution: '',
+                crossOrigin: true
+            });
+            
+            // Couche tactique simplifiée en Canvas
+            layers.tactical = L.gridLayer({
+                maxZoom: 20,
                 attribution: ''
             });
             
-            // Couche tactique avec grille verte
-            layers.tactical = L.tileLayer('data:image/svg+xml;base64,' + btoa(`
-                <svg width="256" height="256" xmlns="http://www.w3.org/2000/svg">
-                    <defs>
-                        <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
-                            <path d="M 32 0 L 0 0 0 32" fill="none" stroke="#00ff00" stroke-width="1" opacity="0.6"/>
-                        </pattern>
-                    </defs>
-                    <rect width="256" height="256" fill="#1a1a1a"/>
-                    <rect width="256" height="256" fill="url(#grid)"/>
-                </svg>
-            `), {
-                maxZoom: 20,
-                tileSize: 256,
-                attribution: ''
+            // Créer la grille tactique
+            layers.tactical.createTile = function(coords) {
+                const tile = document.createElement('canvas');
+                const ctx = tile.getContext('2d');
+                tile.width = tile.height = 256;
+                
+                // Fond noir
+                ctx.fillStyle = '#1a1a1a';
+                ctx.fillRect(0, 0, 256, 256);
+                
+                // Grille verte
+                ctx.strokeStyle = '#00ff00';
+                ctx.lineWidth = 1;
+                ctx.globalAlpha = 0.6;
+                
+                const gridSize = 32;
+                for (let x = 0; x <= 256; x += gridSize) {
+                    ctx.beginPath();
+                    ctx.moveTo(x, 0);
+                    ctx.lineTo(x, 256);
+                    ctx.stroke();
+                }
+                for (let y = 0; y <= 256; y += gridSize) {
+                    ctx.beginPath();
+                    ctx.moveTo(0, y);
+                    ctx.lineTo(256, y);
+                    ctx.stroke();
+                }
+                
+                return tile;
+            };
+
+            // Ajouter la couche par défaut avec gestion d'erreur
+            layers.osm.on('tileerror', function(error) {
+                console.warn('Erreur de chargement tuile OSM:', error);
+                notify('Connexion lente - Chargement en cours...');
+            });
+            
+            layers.osm.on('tileload', function() {
+                console.log('Tuile OSM chargée avec succès');
             });
 
-            // Ajouter la couche par défaut
             map.addLayer(layers.osm);
 
             // Groupe d'obstacles
@@ -322,14 +359,35 @@
             
             // Événements
             map.on('click', onMapClick);
+            
+            // Événement de chargement de la carte
+            map.whenReady(function() {
+                console.log('Carte prête');
+                notify('Carte chargée');
+            });
 
-            // Vérifier que la couche s'affiche
-            setTimeout(() => {
-                console.log('Couches initialisées:', Object.keys(layers));
-                console.log('Couche OSM active:', map.hasLayer(layers.osm));
-            }, 1000);
+            // Test de connectivité après 3 secondes
+            setTimeout(testMapLayers, 3000);
 
             startGPS();
+        }
+        
+        function testMapLayers() {
+            console.log('=== TEST DES COUCHES ===');
+            console.log('Couches disponibles:', Object.keys(layers));
+            console.log('OSM chargée:', map.hasLayer(layers.osm));
+            
+            // Forcer un rafraîchissement si aucune tuile n'est visible
+            const mapContainer = document.getElementById('map');
+            const tiles = mapContainer.querySelectorAll('.leaflet-tile');
+            console.log('Nombre de tuiles:', tiles.length);
+            
+            if (tiles.length === 0) {
+                console.warn('Aucune tuile chargée, tentative de rafraîchissement...');
+                map.invalidateSize();
+                map.setView([48.8566, 2.3522], 15);
+                notify('Rafraîchissement de la carte...');
+            }
         }
 
         function startGPS() {
@@ -486,25 +544,54 @@
         }
 
         function switchLayer(type) {
+            console.log(`Changement vers couche: ${type}`);
+            
             // Supprimer toutes les couches existantes
-            if (layers.osm && map.hasLayer(layers.osm)) map.removeLayer(layers.osm);
-            if (layers.satellite && map.hasLayer(layers.satellite)) map.removeLayer(layers.satellite);
-            if (layers.topo && map.hasLayer(layers.topo)) map.removeLayer(layers.topo);
-            if (layers.tactical && map.hasLayer(layers.tactical)) map.removeLayer(layers.tactical);
+            Object.keys(layers).forEach(layerName => {
+                if (layers[layerName] && map.hasLayer(layers[layerName])) {
+                    map.removeLayer(layers[layerName]);
+                    console.log(`Couche ${layerName} supprimée`);
+                }
+            });
             
             // Ajouter la nouvelle couche
             if (layers[type]) {
                 map.addLayer(layers[type]);
+                console.log(`Couche ${type} ajoutée`);
                 
-                // Mettre à jour l'interface avec IDs spécifiques
+                // Mettre à jour l'interface
                 document.querySelectorAll('.layer-btn').forEach(btn => btn.classList.remove('active'));
                 document.getElementById(type + 'Btn').classList.add('active');
                 
+                // Gestion spéciale pour la couche tactique
+                if (type === 'tactical') {
+                    // Forcer un redraw pour la couche canvas
+                    setTimeout(() => {
+                        map.invalidateSize();
+                    }, 100);
+                }
+                
                 notify(`Carte: ${type.toUpperCase()}`);
-                console.log(`Couche ${type} activée`);
+                
+                // Test de chargement après 2 secondes
+                setTimeout(() => {
+                    const tiles = document.querySelectorAll('.leaflet-tile');
+                    console.log(`Tuiles chargées pour ${type}:`, tiles.length);
+                    if (tiles.length === 0 && type !== 'tactical') {
+                        notify('Erreur de chargement - Réessayez');
+                    }
+                }, 2000);
+                
             } else {
-                notify('Erreur: Couche non trouvée');
                 console.error('Couche non trouvée:', type);
+                notify('Erreur: Couche non trouvée');
+                
+                // Fallback vers OSM
+                if (type !== 'osm' && layers.osm) {
+                    console.log('Fallback vers OSM');
+                    map.addLayer(layers.osm);
+                    document.getElementById('osmBtn').classList.add('active');
+                }
             }
         }
 
@@ -629,6 +716,32 @@
             document.getElementById('setupScreen').classList.remove('hidden');
             document.getElementById('map').classList.add('hidden');
             document.getElementById('gameHUD').classList.add('hidden');
+        }
+        
+        function testLayers() {
+            console.log('=== TEST MANUEL DES COUCHES ===');
+            Object.keys(layers).forEach(layerName => {
+                console.log(`${layerName}:`, layers[layerName] ? 'OK' : 'ERREUR');
+            });
+            
+            const tiles = document.querySelectorAll('.leaflet-tile');
+            console.log('Tuiles visibles:', tiles.length);
+            
+            // Test de connectivité
+            const testImg = new Image();
+            testImg.onload = () => {
+                notify('✅ Connexion Internet OK');
+                console.log('Test connectivité: OK');
+            };
+            testImg.onerror = () => {
+                notify('❌ Problème de connexion');
+                console.log('Test connectivité: ERREUR');
+            };
+            testImg.src = 'https://tile.openstreetmap.org/10/512/357.png?' + Date.now();
+            
+            // Rafraîchir la carte
+            map.invalidateSize();
+            notify('Test des couches - Voir console (F12)');
         }
 
         function updateLoading(text) {
