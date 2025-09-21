@@ -603,6 +603,26 @@
 
                         if (layer) {
                             layer._obstacleId = id;
+                            layer._obstacleData = obs;
+                            
+                            // Ajouter popup pour supprimer
+                            layer.bindPopup(`
+                                <div style="text-align: center;">
+                                    <b>Obstacle ${obs.type}</b><br>
+                                    Par: ${obs.createdBy || 'Inconnu'}<br>
+                                    <button onclick="App.removeObstacle('${id}')" style="
+                                        background: #ff4444; 
+                                        color: white; 
+                                        border: none; 
+                                        padding: 5px 10px; 
+                                        border-radius: 3px; 
+                                        cursor: pointer;
+                                        margin-top: 5px;
+                                        font-weight: bold;
+                                    ">Supprimer</button>
+                                </div>
+                            `);
+                            
                             this.groups.obstacles.addLayer(layer);
                             obstacleCount++;
                         }
@@ -617,6 +637,33 @@
                 if (this.map) {
                     this.map.invalidateSize();
                 }
+            },
+            
+            removeObstacle(id) {
+                console.log('Suppression obstacle:', id);
+                
+                // Supprimer de Firebase
+                if (this.state.isConnected && this.firebase.db) {
+                    const obsRef = ref(this.firebase.db, `obstacles/${this.state.teamCode}/${id}`);
+                    remove(obsRef).then(() => {
+                        console.log('Obstacle supprimé de Firebase');
+                        this.notify('Obstacle supprimé');
+                    }).catch(err => {
+                        console.error('Erreur suppression:', err);
+                        this.notify('Erreur suppression');
+                    });
+                } else {
+                    // Suppression locale seulement
+                    this.groups.obstacles.eachLayer(layer => {
+                        if (layer._obstacleId === id) {
+                            this.groups.obstacles.removeLayer(layer);
+                        }
+                    });
+                    this.notify('Obstacle supprimé (local)');
+                }
+                
+                // Fermer le popup
+                this.map.closePopup();
             },
 
             updateEnemies(data) {
@@ -1105,6 +1152,11 @@
                     App.updateObstacles(snap.val());
                 }, { onlyOnce: true });
             }
+        };
+        
+        // IMPORTANT: Exposer la fonction removeObstacle pour les popups
+        window.removeObstacle = function(id) {
+            App.removeObstacle(id);
         };
 
         // Charger config au démarrage
