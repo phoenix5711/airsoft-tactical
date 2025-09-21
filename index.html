@@ -344,8 +344,21 @@
                 
                 // Écoute des changements
                 onValue(this.firebase.refs.team, (snap) => this.updateTeammates(snap.val()));
-                onValue(this.firebase.refs.obstacles, (snap) => this.updateObstacles(snap.val()));
                 onValue(this.firebase.refs.enemies, (snap) => this.updateEnemies(snap.val()));
+                
+                // IMPORTANT: Forcer le chargement initial des obstacles
+                onValue(this.firebase.refs.obstacles, (snap) => {
+                    console.log('Obstacles Firebase:', snap.val());
+                    this.updateObstacles(snap.val());
+                });
+                
+                // Forcer un rafraîchissement des obstacles après 1 seconde
+                setTimeout(() => {
+                    console.log('Force refresh obstacles');
+                    onValue(this.firebase.refs.obstacles, (snap) => {
+                        this.updateObstacles(snap.val());
+                    }, { onlyOnce: true });
+                }, 1000);
                 
                 // Déconnexion auto
                 const playerRef = ref(this.firebase.db, `teams/${team}/${this.state.playerName}`);
@@ -378,13 +391,28 @@
                 // Ajout couche par défaut
                 this.layers.standard.addTo(this.map);
 
-                // Groupes
-                this.groups.obstacles = L.layerGroup().addTo(this.map);
+                // IMPORTANT: Créer et ajouter les groupes à la carte immédiatement
+                console.log('Création des groupes de couches');
+                this.groups.obstacles = L.layerGroup();
+                this.groups.obstacles.addTo(this.map);
+                console.log('Groupe obstacles ajouté à la carte');
+                
                 this.groups.grid = L.layerGroup();
 
                 // Événements carte
                 this.map.on('click', (e) => this.onMapClick(e));
                 this.map.on('mousemove', (e) => this.onMapMove(e));
+                
+                // Forcer le chargement des obstacles existants après init complète
+                setTimeout(() => {
+                    if (this.firebase.refs.obstacles) {
+                        console.log('Vérification manuelle des obstacles');
+                        onValue(this.firebase.refs.obstacles, (snap) => {
+                            console.log('Obstacles trouvés:', snap.val());
+                            this.updateObstacles(snap.val());
+                        }, { onlyOnce: true });
+                    }
+                }, 2000);
             },
 
             initGPS() {
@@ -520,38 +548,70 @@
             },
 
             updateObstacles(data) {
+                console.log('=== UPDATE OBSTACLES ===', data);
+                
+                // S'assurer que le groupe obstacles existe et est sur la carte
+                if (!this.groups.obstacles) {
+                    console.log('Création du groupe obstacles');
+                    this.groups.obstacles = L.layerGroup();
+                }
+                
+                // S'assurer que le groupe est bien ajouté à la carte
+                if (!this.map.hasLayer(this.groups.obstacles)) {
+                    console.log('Ajout du groupe obstacles à la carte');
+                    this.groups.obstacles.addTo(this.map);
+                }
+                
                 // Effacer tous les obstacles existants
                 this.groups.obstacles.clearLayers();
                 
-                if (!data) return;
+                if (!data) {
+                    console.log('Aucun obstacle à afficher');
+                    return;
+                }
 
+                let obstacleCount = 0;
                 Object.keys(data).forEach(id => {
                     const obs = data[id];
-                    let layer;
+                    let layer = null;
 
-                    if (obs.type === 'rectangle' && obs.bounds) {
-                        layer = L.rectangle([
-                            [obs.bounds.south, obs.bounds.west],
-                            [obs.bounds.north, obs.bounds.east]
-                        ], {
-                            color: obs.color || '#ff4444',
-                            weight: 2,
-                            fillOpacity: 0.3
-                        });
-                    } else if (obs.type === 'circle' && obs.center && obs.radius) {
-                        layer = L.circle([obs.center.lat, obs.center.lng], {
-                            radius: obs.radius,
-                            color: obs.color || '#ff4444',
-                            weight: 2,
-                            fillOpacity: 0.3
-                        });
-                    }
+                    try {
+                        if (obs.type === 'rectangle' && obs.bounds) {
+                            console.log('Création rectangle:', id);
+                            layer = L.rectangle([
+                                [obs.bounds.south, obs.bounds.west],
+                                [obs.bounds.north, obs.bounds.east]
+                            ], {
+                                color: obs.color || '#ff4444',
+                                weight: 3,
+                                fillOpacity: 0.3
+                            });
+                        } else if (obs.type === 'circle' && obs.center && obs.radius) {
+                            console.log('Création cercle:', id);
+                            layer = L.circle([obs.center.lat, obs.center.lng], {
+                                radius: obs.radius,
+                                color: obs.color || '#ff4444',
+                                weight: 3,
+                                fillOpacity: 0.3
+                            });
+                        }
 
-                    if (layer) {
-                        layer._obstacleId = id;
-                        this.groups.obstacles.addLayer(layer);
+                        if (layer) {
+                            layer._obstacleId = id;
+                            this.groups.obstacles.addLayer(layer);
+                            obstacleCount++;
+                        }
+                    } catch (error) {
+                        console.error('Erreur création obstacle:', error, obs);
                     }
                 });
+                
+                console.log(`${obstacleCount} obstacles ajoutés au groupe`);
+                
+                // Forcer un rafraîchissement de la carte
+                if (this.map) {
+                    this.map.invalidateSize();
+                }
             },
 
             updateEnemies(data) {
@@ -782,20 +842,66 @@
             },
 
             showQRCode() {
-                if (!this.state.teamCode) {
+                console.log('=== SHOW QR CODE ===');
+                console.log('Team Code:', this.state.teamCode);
+                console.log('Player Name:', this.state.playerName);
+                
+                // Si pas de team, montrer l'écran de config
+                if (!this.state.teamCode || this.state.teamCode === '') {
+                    console.log('Pas de team - affichage config');
                     document.getElementById('setupScreen').classList.remove('hidden');
+                    document.getElementById('map').classList.add('hidden');
+                    document.getElementById('gameHUD').classList.add('hidden');
                     return;
                 }
 
-                const modal = document.getElementById('qrModal');
-                const img = document.getElementById('qrcode');
-                const span = document.getElementById('qrTeamCode');
+                try {
+                    const modal = document.getElementById('qrModal');
+                    const img = document.getElementById('qrcode');
+                    const span = document.getElementById('qrTeamCode');
+                    
+                    console.log('Modal existe?', modal !== null);
+                    console.log('Image existe?', img !== null);
+                    console.log('Span existe?', span !== null);
+                    
+                    if (!modal || !img || !span) {
+                        console.error('Éléments manquants');
+                        // Fallback avec alert
+                        const url = `${window.location.origin}${window.location.pathname}?team=${this.state.teamCode}`;
+                        alert(`📡 ÉQUIPE: ${this.state.teamCode}\n\nPartagez cette URL:\n${url}`);
+                        return;
+                    }
 
-                span.textContent = this.state.teamCode;
-                const url = `${window.location.origin}${window.location.pathname}?team=${this.state.teamCode}`;
-                img.src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(url)}`;
-                
-                modal.style.display = 'flex';
+                    // Afficher le code équipe
+                    span.textContent = this.state.teamCode;
+                    
+                    // Générer l'URL
+                    const url = `${window.location.origin}${window.location.pathname}?team=${encodeURIComponent(this.state.teamCode)}`;
+                    console.log('URL générée:', url);
+                    
+                    // Générer le QR code
+                    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(url)}`;
+                    console.log('QR URL:', qrUrl);
+                    
+                    img.src = qrUrl;
+                    img.onload = () => console.log('QR Code chargé');
+                    img.onerror = () => {
+                        console.error('Erreur QR - tentative Google Charts');
+                        img.src = `https://chart.googleapis.com/chart?chs=200x200&cht=qr&chl=${encodeURIComponent(url)}`;
+                    };
+                    
+                    // Forcer l'affichage
+                    modal.style.display = 'flex';
+                    modal.style.visibility = 'visible';
+                    modal.style.zIndex = '20000';
+                    
+                    console.log('Modal affichée');
+                    this.notify('📲 QR Code généré');
+                    
+                } catch (error) {
+                    console.error('ERREUR showQRCode:', error);
+                    alert(`Erreur QR!\nCode équipe: ${this.state.teamCode}`);
+                }
             },
 
             closeModal() {
@@ -851,6 +957,39 @@
 
         // Exposer globalement
         window.App = App;
+        
+        // Fonction de debug pour tester
+        window.testQR = function() {
+            console.log('=== TEST QR DIRECT ===');
+            console.log('App.state.teamCode:', App.state.teamCode);
+            
+            // Test avec équipe forcée si pas définie
+            if (!App.state.teamCode) {
+                App.state.teamCode = 'TEST123';
+                console.log('Team forcée à TEST123');
+            }
+            
+            // Appeler la fonction
+            App.showQRCode();
+        };
+        
+        window.debugApp = function() {
+            console.log('=== DEBUG APP ===');
+            console.log('Team:', App.state.teamCode);
+            console.log('Player:', App.state.playerName); 
+            console.log('Connected:', App.state.isConnected);
+            console.log('Obstacles group:', App.groups.obstacles);
+            console.log('Map has obstacles layer:', App.map && App.map.hasLayer(App.groups.obstacles));
+            console.log('Firebase refs:', App.firebase.refs);
+            
+            // Forcer le rechargement des obstacles
+            if (App.firebase.refs.obstacles) {
+                onValue(App.firebase.refs.obstacles, (snap) => {
+                    console.log('Obstacles dans Firebase:', snap.val());
+                    App.updateObstacles(snap.val());
+                }, { onlyOnce: true });
+            }
+        };
 
         // Charger config au démarrage
         window.addEventListener('load', () => {
