@@ -208,12 +208,12 @@
 
         // Variables globales
         let map, layers = {}, playerMarker, teammateMarkers = {};
-        let obstacleGroup, database, teamRef, obstacleRef;
+        let obstacleGroup, database, teamRef, obstacleRef, enemyRef;
         let currentPosition, watchId, isConnected = false;
         let enemyMode = false, drawMode = false, currentDrawMode = 'rectangle', currentColor = '#ff4444';
         let teamCode, playerName;
         let isDrawing = false, drawStartPoint = null, previewLayer = null;
-        let enemyMarkers = [];
+        let enemyMarkers = {};
         let gridLayer; // Pour le quadrillage tactique
 
         // Configuration Firebase
@@ -269,40 +269,76 @@
         function recalibrateGPS() {
             notify('Recalibrage GPS...');
             
+            // Diagnostic GPS détaillé
+            const diagnosticInfo = [];
+            
+            // Vérifier le support GPS
+            if (!navigator.geolocation) {
+                alert('GPS NON SUPPORTÉ sur ce navigateur!');
+                return;
+            }
+            
             // Arrêter l'ancien watchPosition
             if (watchId) {
                 navigator.geolocation.clearWatch(watchId);
                 watchId = null;
             }
             
-            // Forcer une nouvelle acquisition avec haute précision
-            const options = {
-                enableHighAccuracy: true,
-                maximumAge: 0,  // Pas de cache
-                timeout: 30000   // 30 secondes de timeout
-            };
+            // Test avec différentes configurations
+            notify('Test 1/3: Position rapide...');
             
+            // Test 1: Position rapide
             navigator.geolocation.getCurrentPosition(
-                (position) => {
-                    onGPS(position);
-                    notify(`GPS recalibré (précision: ${Math.round(position.coords.accuracy)}m)`);
+                (pos) => {
+                    diagnosticInfo.push(`Rapide OK: ${Math.round(pos.coords.accuracy)}m`);
+                    notify('Test 2/3: Haute précision...');
                     
-                    // Relancer le suivi
-                    watchId = navigator.geolocation.watchPosition(onGPS, onGPSError, {
-                        enableHighAccuracy: true,
-                        maximumAge: 3000,
-                        timeout: 20000
-                    });
+                    // Test 2: Haute précision
+                    navigator.geolocation.getCurrentPosition(
+                        (pos2) => {
+                            diagnosticInfo.push(`Précis OK: ${Math.round(pos2.coords.accuracy)}m`);
+                            
+                            if (pos2.coords.accuracy > 500) {
+                                alert(`DIAGNOSTIC GPS:\n\n${diagnosticInfo.join('\n')}\n\nPROBLÈME DÉTECTÉ!\nPrécision: ${Math.round(pos2.coords.accuracy)}m\n\n` +
+                                    `SOLUTIONS:\n` +
+                                    `1. Paramètres → Position → Mode\n` +
+                                    `   ➜ Sélectionnez "Haute précision"\n\n` +
+                                    `2. Paramètres → Apps → Navigateur\n` +
+                                    `   ➜ Permissions → Position: Autoriser\n\n` +
+                                    `3. Allez EN EXTÉRIEUR (important!)\n\n` +
+                                    `4. Désactivez l'économie de batterie\n\n` +
+                                    `5. Redémarrez le téléphone si nécessaire`);
+                            } else {
+                                notify(`GPS OK (${Math.round(pos2.coords.accuracy)}m)`);
+                                onGPS(pos2);
+                            }
+                            
+                            // Relancer le suivi
+                            watchId = navigator.geolocation.watchPosition(onGPS, onGPSError, {
+                                enableHighAccuracy: true,
+                                maximumAge: 1000,
+                                timeout: 20000
+                            });
+                        },
+                        (err) => {
+                            diagnosticInfo.push(`Précis ERREUR: ${err.message}`);
+                            alert(`DIAGNOSTIC GPS:\n\n${diagnosticInfo.join('\n')}\n\nERREUR: ${err.message}`);
+                        },
+                        { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 }
+                    );
                 },
-                (error) => {
-                    console.error('Erreur recalibrage GPS:', error);
-                    notify('Erreur GPS - Vérifiez les paramètres');
-                    onGPSError(error);
+                (err) => {
+                    diagnosticInfo.push(`Rapide ERREUR: ${err.message}`);
+                    
+                    if (err.code === 1) {
+                        alert('GPS BLOQUÉ!\n\nAutorisez la position dans les paramètres du navigateur ET du téléphone');
+                    } else {
+                        alert(`ERREUR GPS: ${err.message}\n\nVérifiez vos paramètres de localisation`);
+                    }
                 },
-                options
+                { enableHighAccuracy: false, timeout: 5000 }
             );
             
-            // Vibration de feedback
             if (navigator.vibrate) navigator.vibrate(100);
         }
         
@@ -426,12 +462,14 @@
             
             teamRef = ref(database, `teams/${teamCode}`);
             obstacleRef = ref(database, `obstacles/${teamCode}`);
+            enemyRef = ref(database, `enemies/${teamCode}`);
             
             const playerRef = ref(database, `teams/${teamCode}/${playerName}`);
             onDisconnect(playerRef).remove();
             
             onValue(teamRef, updateTeam);
             onValue(obstacleRef, updateObstacles);
+            onValue(enemyRef, updateEnemies);
             
             initMap();
         }
@@ -537,30 +575,48 @@
                 return;
             }
 
+            // Vérifier les permissions
+            if (navigator.permissions) {
+                navigator.permissions.query({name: 'geolocation'}).then(result => {
+                    console.log('Permission GPS:', result.state);
+                    if (result.state === 'denied') {
+                        alert('GPS BLOQUÉ !\n\nActivez la géolocalisation dans :\nParamètres → Apps → Navigateur → Permissions → Position\n\nOu dans les paramètres de votre téléphone.');
+                    }
+                });
+            }
+
             const options = { 
                 enableHighAccuracy: true, 
-                maximumAge: 3000,  // Réduire le cache à 3 secondes
-                timeout: 20000     // Augmenter le timeout à 20 secondes
+                maximumAge: 0,      // Forcer position fraîche
+                timeout: 30000      // 30 secondes de timeout
             };
             
-            // Essayer d'abord une position rapide
+            // Tentative directe haute précision
             navigator.geolocation.getCurrentPosition(
                 (position) => {
+                    console.log('GPS OK - Précision:', position.coords.accuracy);
                     onGPS(position);
-                    // Puis lancer le suivi précis
-                    watchId = navigator.geolocation.watchPosition(onGPS, onGPSError, options);
+                    
+                    // Lancer le suivi continu
+                    watchId = navigator.geolocation.watchPosition(onGPS, onGPSError, {
+                        enableHighAccuracy: true,
+                        maximumAge: 2000,
+                        timeout: 20000
+                    });
                 },
                 (error) => {
-                    console.warn('GPS rapide échoué, tentative haute précision...', error);
-                    // Réessayer avec plus de temps
-                    navigator.geolocation.getCurrentPosition(onGPS, onGPSError, {
-                        enableHighAccuracy: true,
-                        maximumAge: 0,
-                        timeout: 30000
-                    });
-                    watchId = navigator.geolocation.watchPosition(onGPS, onGPSError, options);
+                    console.error('Erreur GPS:', error.code, error.message);
+                    
+                    if (error.code === 1) {
+                        alert('GPS REFUSÉ !\n\nAutorisez la localisation pour cette application.');
+                    } else if (error.code === 3) {
+                        notify('GPS timeout - Allez en extérieur');
+                    }
+                    
+                    // Mode démo si erreur
+                    onGPSError(error);
                 },
-                { enableHighAccuracy: false, timeout: 5000 }  // Position rapide moins précise
+                options
             );
         }
 
@@ -570,12 +626,19 @@
             const lng = position.coords.longitude;
             const accuracy = position.coords.accuracy;
             
-            // Rejeter les positions avec une précision trop faible
-            if (accuracy > 100) {
-                console.warn(`Précision GPS faible: ${accuracy}m`);
-                updateStatus('gpsStatus', `📍~${Math.round(accuracy)}m`);
-            } else {
-                updateStatus('gpsStatus', '📍ON');
+            console.log(`GPS: Lat=${lat}, Lng=${lng}, Précision=${accuracy}m`);
+            
+            // Rejeter les positions avec précision > 500m
+            if (accuracy > 500) {
+                console.warn(`Précision GPS trop faible: ${accuracy}m`);
+                updateStatus('gpsStatus', `📍❌${Math.round(accuracy)}m`);
+                
+                // Si précision > 1000m, c'est probablement un problème de configuration
+                if (accuracy > 1000) {
+                    notify('⚠️ GPS imprécis - Vérifiez paramètres');
+                    alert(`PROBLÈME GPS DÉTECTÉ !\nPrécision: ${Math.round(accuracy)}m\n\nSolutions:\n1. Allez en EXTÉRIEUR\n2. Activez "Haute précision" dans:\n   Paramètres → Position → Mode\n3. Désactivez l'économie de batterie\n4. Autorisez le GPS pour le navigateur`);
+                }
+                return; // Ne pas utiliser cette position
             }
             
             // Vérifier si les coordonnées sont valides
@@ -583,6 +646,8 @@
                 console.error('Coordonnées GPS invalides:', lat, lng);
                 return;
             }
+            
+            updateStatus('gpsStatus', accuracy < 50 ? '📍✅' : `📍${Math.round(accuracy)}m`);
             
             currentPosition = {
                 lat: lat,
@@ -962,34 +1027,102 @@
         }
 
         function addEnemyMarker(latlng) {
+            const enemyId = 'enemy_' + Date.now() + '_' + playerName;
+            
+            const enemyData = {
+                lat: latlng.lat,
+                lng: latlng.lng,
+                reportedBy: playerName,
+                timestamp: Date.now(),
+                expiresAt: Date.now() + 30000 // Expire dans 30 secondes
+            };
+            
+            // Sauvegarder dans Firebase pour partage avec l'équipe
+            if (database && isConnected) {
+                const enemyNodeRef = ref(database, `enemies/${teamCode}/${enemyId}`);
+                set(enemyNodeRef, enemyData).then(() => {
+                    console.log('Ennemi partagé avec l\'équipe');
+                }).catch(error => {
+                    console.error('Erreur partage ennemi:', error);
+                });
+            }
+            
+            // Créer le marqueur local immédiatement
+            createEnemyMarker(enemyId, enemyData);
+            
+            notify('Ennemi marqué et partagé (30s)');
+            if (navigator.vibrate) navigator.vibrate(200);
+        }
+        
+        function createEnemyMarker(id, data) {
+            // Ne pas recréer si existe déjà
+            if (enemyMarkers[id]) return;
+            
             const icon = L.divIcon({
                 className: '',
                 html: `<div style="width: 20px; height: 20px; background: #ff4444; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 10px #ff4444; animation: pulse 1s infinite;">
-                    <div style="position: absolute; top: -15px; left: 50%; transform: translateX(-50%); background: #ff4444; color: white; padding: 2px 5px; border-radius: 3px; font-size: 9px; white-space: nowrap;">ENNEMI</div>
+                    <div style="position: absolute; top: -18px; left: 50%; transform: translateX(-50%); background: #ff4444; color: white; padding: 2px 5px; border-radius: 3px; font-size: 9px; white-space: nowrap;">⚠️ ${data.reportedBy}</div>
                 </div>
-                <style>@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }</style>`,
+                <style>@keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.7; transform: scale(1.1); } }</style>`,
                 iconSize: [20, 20],
                 iconAnchor: [10, 10]
             });
             
-            // z-index élevé pour être au-dessus des obstacles
-            const marker = L.marker([latlng.lat, latlng.lng], {icon, zIndexOffset: 2000}).addTo(map);
-            marker.bindPopup(`⚠️ Ennemi signalé<br>Par: ${playerName}<br>Disparaît dans 30s`);
+            const marker = L.marker([data.lat, data.lng], {icon, zIndexOffset: 2000}).addTo(map);
             
-            enemyMarkers.push(marker);
+            const timeRemaining = Math.max(0, Math.round((data.expiresAt - Date.now()) / 1000));
+            marker.bindPopup(`⚠️ Ennemi signalé<br>Par: ${data.reportedBy}<br>Expire dans: ${timeRemaining}s`);
             
-            // Disparition après 30 secondes
-            setTimeout(() => {
-                if (map.hasLayer(marker)) {
-                    map.removeLayer(marker);
-                    const index = enemyMarkers.indexOf(marker);
-                    if (index > -1) enemyMarkers.splice(index, 1);
+            enemyMarkers[id] = marker;
+            
+            // Auto-suppression après expiration
+            const timeUntilExpiry = data.expiresAt - Date.now();
+            if (timeUntilExpiry > 0) {
+                setTimeout(() => {
+                    if (enemyMarkers[id]) {
+                        map.removeLayer(enemyMarkers[id]);
+                        delete enemyMarkers[id];
+                        
+                        // Supprimer de Firebase aussi
+                        if (database && isConnected) {
+                            const enemyNodeRef = ref(database, `enemies/${teamCode}/${id}`);
+                            remove(enemyNodeRef);
+                        }
+                    }
+                }, timeUntilExpiry);
+            }
+        }
+        
+        function updateEnemies(snapshot) {
+            const data = snapshot.val();
+            
+            // Supprimer les marqueurs qui n'existent plus dans Firebase
+            Object.keys(enemyMarkers).forEach(id => {
+                if (!data || !data[id]) {
+                    if (map.hasLayer(enemyMarkers[id])) {
+                        map.removeLayer(enemyMarkers[id]);
+                    }
+                    delete enemyMarkers[id];
                 }
-            }, 30000);
+            });
             
-            notify('Ennemi marqué (30s)');
+            if (!data) return;
             
-            if (navigator.vibrate) navigator.vibrate(200);
+            // Ajouter/mettre à jour les marqueurs
+            Object.keys(data).forEach(id => {
+                const enemy = data[id];
+                
+                // Vérifier si l'ennemi n'a pas expiré
+                if (enemy.expiresAt && Date.now() > enemy.expiresAt) {
+                    // Supprimer de Firebase si expiré
+                    const enemyNodeRef = ref(database, `enemies/${teamCode}/${id}`);
+                    remove(enemyNodeRef);
+                    return;
+                }
+                
+                // Créer ou mettre à jour le marqueur
+                createEnemyMarker(id, enemy);
+            });
         }
 
         function removeObstacle(id) {
