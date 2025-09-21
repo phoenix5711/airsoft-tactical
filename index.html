@@ -225,7 +225,11 @@
                 <img id="qrcode" alt="QR Code" style="width: 200px; height: 200px;">
             </div>
             <button onclick="App.copyTeamLink()">📋 Copier le lien</button>
+            <button id="installBtn" onclick="App.installPWA()" style="display: none;">📥 Installer l'app</button>
             <button class="close-btn" onclick="App.closeModal()">Fermer</button>
+            <div style="margin-top: 15px;">
+                <a href="#" onclick="App.changeTeam()" style="color: #888; font-size: 11px; text-decoration: underline;">Changer d'équipe</a>
+            </div>
         </div>
     </div>
 
@@ -265,7 +269,8 @@
                 drawColor: '#ff4444',
                 isDrawing: false,
                 drawStart: null,
-                preview: null
+                preview: null,
+                deferredPrompt: null  // Pour l'installation PWA
             },
 
             // Configuration Firebase
@@ -621,6 +626,10 @@
                 Object.keys(this.markers.enemies).forEach(id => {
                     if (!data || !data[id]) {
                         if (this.markers.enemies[id]) {
+                            // Annuler le timeout si existe
+                            if (this.markers.enemies[id]._timeoutId) {
+                                clearTimeout(this.markers.enemies[id]._timeoutId);
+                            }
                             this.map.removeLayer(this.markers.enemies[id]);
                             delete this.markers.enemies[id];
                         }
@@ -639,14 +648,28 @@
                         return;
                     }
 
-                    // Créer marqueur si n'existe pas
+                    // Créer marqueur si n'existe pas (SANS METTRE À JOUR LA POSITION)
                     if (!this.markers.enemies[id]) {
-                        this.createEnemyMarker(id, enemy);
+                        // Valider les coordonnées
+                        if (!enemy.lat || !enemy.lng) {
+                            console.error('Coordonnées invalides reçues:', enemy);
+                            return;
+                        }
+                        
+                        // Créer avec position fixe
+                        this.createEnemyMarker(id, {
+                            lat: parseFloat(enemy.lat),
+                            lng: parseFloat(enemy.lng),
+                            reportedBy: enemy.reportedBy,
+                            expiresAt: enemy.expiresAt
+                        });
                         
                         if (enemy.reportedBy !== this.state.playerName) {
                             this.notify(`⚠️ ${enemy.reportedBy} signale un ennemi!`);
+                            if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
                         }
                     }
+                    // NE PAS mettre à jour la position des marqueurs existants
                 });
             },
 
@@ -704,51 +727,77 @@
             },
 
             addEnemy(latlng) {
-                const id = 'enemy_' + Date.now();
+                // Validation des coordonnées
+                if (!latlng || !latlng.lat || !latlng.lng) {
+                    console.error('Position invalide pour ennemi:', latlng);
+                    return;
+                }
+                
+                const id = 'enemy_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
                 const data = {
-                    lat: latlng.lat,
-                    lng: latlng.lng,
-                    reportedBy: this.state.playerName,
+                    lat: parseFloat(latlng.lat.toFixed(6)), // Fixer la précision
+                    lng: parseFloat(latlng.lng.toFixed(6)), // Fixer la précision
+                    reportedBy: this.state.playerName || 'JOUEUR',
                     timestamp: Date.now(),
                     expiresAt: Date.now() + 30000
                 };
+
+                console.log('Ajout ennemi à position:', data.lat, data.lng);
 
                 // Créer localement
                 this.createEnemyMarker(id, data);
 
                 // Partager si connecté
-                if (this.state.isConnected) {
+                if (this.state.isConnected && this.firebase.db) {
                     const enemyRef = ref(this.firebase.db, `enemies/${this.state.teamCode}/${id}`);
-                    set(enemyRef, data);
+                    set(enemyRef, data).catch(err => console.error('Erreur partage ennemi:', err));
                 }
 
                 this.notify('🎯 Ennemi marqué (30s)');
+                if (navigator.vibrate) navigator.vibrate(200);
             },
 
             createEnemyMarker(id, data) {
                 if (this.markers.enemies[id]) return;
 
+                // Vérifier que les coordonnées sont valides
+                if (!data.lat || !data.lng) {
+                    console.error('Coordonnées invalides pour ennemi:', data);
+                    return;
+                }
+
                 const icon = L.divIcon({
-                    className: 'enemy-marker-icon',
-                    html: `<div class="enemy-marker-icon"></div>
-                           <div style="position: absolute; top: -20px; left: 50%; transform: translateX(-50%); 
-                                       background: #ff0000; color: white; padding: 2px 6px; border-radius: 4px; 
-                                       font-size: 10px; font-weight: bold; white-space: nowrap;">
-                               ⚠️ ${data.reportedBy}
+                    className: '',
+                    html: `<div style="position: relative; width: 30px; height: 30px;">
+                               <div style="width: 30px; height: 30px; 
+                                           background: radial-gradient(circle, #ff0000, #cc0000);
+                                           border: 3px solid #ffff00;
+                                           border-radius: 50%;
+                                           box-shadow: 0 0 20px #ff0000;
+                                           animation: enemyPulse 1s infinite;"></div>
+                               <div style="position: absolute; top: -20px; left: 50%; transform: translateX(-50%); 
+                                           background: #ff0000; color: white; padding: 2px 6px; border-radius: 4px; 
+                                           font-size: 10px; font-weight: bold; white-space: nowrap;">
+                                   ⚠️ ${data.reportedBy || 'ENNEMI'}
+                               </div>
                            </div>`,
                     iconSize: [30, 30],
                     iconAnchor: [15, 15]
                 });
 
+                // Créer le marqueur avec position FIXE (pas de draggable)
                 const marker = L.marker([data.lat, data.lng], {
                     icon,
-                    zIndexOffset: 5000
+                    zIndexOffset: 5000,
+                    draggable: false,  // IMPORTANT: empêcher le déplacement
+                    autoPan: false     // Empêcher le pan automatique
                 }).addTo(this.map);
 
                 this.markers.enemies[id] = marker;
+                console.log(`Ennemi créé à position fixe: ${data.lat}, ${data.lng}`);
 
-                // Auto-suppression
-                setTimeout(() => {
+                // Auto-suppression après 30 secondes
+                const timeoutId = setTimeout(() => {
                     if (this.markers.enemies[id]) {
                         this.map.removeLayer(this.markers.enemies[id]);
                         delete this.markers.enemies[id];
@@ -759,6 +808,9 @@
                         }
                     }
                 }, 30000);
+
+                // Stocker le timeout pour pouvoir l'annuler si besoin
+                marker._timeoutId = timeoutId;
             },
 
             startDrawing(latlng) {
@@ -890,6 +942,17 @@
                         img.src = `https://chart.googleapis.com/chart?chs=200x200&cht=qr&chl=${encodeURIComponent(url)}`;
                     };
                     
+                    // Vérifier si l'installation PWA est disponible
+                    const installBtn = document.getElementById('installBtn');
+                    if (installBtn) {
+                        if (this.state.deferredPrompt) {
+                            installBtn.style.display = 'inline-block';
+                            console.log('Bouton installation affiché');
+                        } else {
+                            installBtn.style.display = 'inline-block'; // Toujours montrer pour les instructions
+                        }
+                    }
+                    
                     // Forcer l'affichage
                     modal.style.display = 'flex';
                     modal.style.visibility = 'visible';
@@ -901,6 +964,59 @@
                 } catch (error) {
                     console.error('ERREUR showQRCode:', error);
                     alert(`Erreur QR!\nCode équipe: ${this.state.teamCode}`);
+                }
+            },
+            
+            installPWA() {
+                console.log('Installation PWA demandée');
+                
+                if (this.state.deferredPrompt) {
+                    // Prompt d'installation disponible
+                    this.state.deferredPrompt.prompt();
+                    this.state.deferredPrompt.userChoice.then(result => {
+                        if (result.outcome === 'accepted') {
+                            console.log('Installation acceptée');
+                            this.notify('📲 Installation lancée!');
+                        } else {
+                            console.log('Installation refusée');
+                        }
+                        this.state.deferredPrompt = null;
+                    });
+                } else {
+                    // Pas de prompt disponible - donner les instructions manuelles
+                    alert(
+                        '📲 INSTALLER L\'APPLICATION\n\n' +
+                        '🤖 ANDROID (Chrome/Edge):\n' +
+                        '1. Menu ⋮ (3 points)\n' +
+                        '2. "Installer l\'application"\n' +
+                        'ou "Ajouter à l\'écran d\'accueil"\n\n' +
+                        '🍎 iOS (Safari):\n' +
+                        '1. Bouton partage ⬆️\n' +
+                        '2. "Sur l\'écran d\'accueil"\n\n' +
+                        'ℹ️ Si déjà installée avant:\n' +
+                        'Videz le cache du navigateur\n' +
+                        'ou utilisez un autre navigateur'
+                    );
+                }
+            },
+            
+            changeTeam() {
+                if (confirm('Changer d\'équipe? Vous serez déconnecté de l\'équipe actuelle.')) {
+                    // Nettoyer Firebase
+                    if (this.state.isConnected && this.state.teamCode && this.state.playerName) {
+                        const playerRef = ref(this.firebase.db, `teams/${this.state.teamCode}/${this.state.playerName}`);
+                        remove(playerRef);
+                    }
+                    
+                    // Réinitialiser
+                    this.state.teamCode = null;
+                    this.state.playerName = null;
+                    
+                    // Retour config
+                    this.closeModal();
+                    document.getElementById('setupScreen').classList.remove('hidden');
+                    document.getElementById('map').classList.add('hidden');
+                    document.getElementById('gameHUD').classList.add('hidden');
                 }
             },
 
@@ -1007,6 +1123,35 @@
                     document.getElementById('playerName').value = config.playerName || '';
                 }
             }
+            
+            // Enregistrer le Service Worker pour PWA
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.register('/sw.js').then(reg => {
+                    console.log('Service Worker enregistré');
+                }).catch(err => {
+                    console.log('Service Worker non disponible');
+                });
+            }
+            
+            // Capturer l'événement d'installation PWA
+            window.addEventListener('beforeinstallprompt', (e) => {
+                console.log('Installation PWA disponible');
+                e.preventDefault();
+                App.state.deferredPrompt = e;
+                
+                // Mettre à jour le bouton si la modal est ouverte
+                const installBtn = document.getElementById('installBtn');
+                if (installBtn) {
+                    installBtn.style.display = 'inline-block';
+                }
+            });
+            
+            // Détection de l'installation
+            window.addEventListener('appinstalled', () => {
+                console.log('PWA installée avec succès');
+                App.notify('✅ Application installée!');
+                App.state.deferredPrompt = null;
+            });
         });
 
         // Nettoyage
