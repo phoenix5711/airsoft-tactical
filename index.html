@@ -73,6 +73,34 @@
             border: 1px solid #00ff00;
         }
         
+        .zoom-controls {
+            position: absolute; bottom: 70px; right: 10px;
+            display: flex; flex-direction: column; gap: 5px;
+            pointer-events: auto;
+        }
+        
+        .zoom-btn {
+            width: 35px; height: 35px;
+            background: rgba(0, 0, 0, 0.9);
+            border: 1px solid #00ff00;
+            color: #00ff00;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 18px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .zoom-btn:hover { 
+            background: rgba(0, 255, 0, 0.2); 
+        }
+        
+        .zoom-btn:active {
+            background: rgba(0, 255, 0, 0.4);
+        }
+        
         .btn {
             padding: 8px 12px; background: rgba(0, 0, 0, 0.9);
             border: 1px solid #00ff00; color: #00ff00; border-radius: 15px;
@@ -197,6 +225,11 @@
             <button class="layer-btn" onclick="App.switchLayer('tactical')">Tactique</button>
         </div>
 
+        <div class="zoom-controls">
+            <button class="zoom-btn" onclick="App.zoomIn()">+</button>
+            <button class="zoom-btn" onclick="App.zoomOut()">−</button>
+        </div>
+
         <div class="controls-bottom">
             <button class="btn" onclick="App.centerPlayer()">📍</button>
             <button class="btn" onclick="App.recalibrateGPS()">🔄</button>
@@ -273,13 +306,17 @@
                 deferredPrompt: null  // Pour l'installation PWA
             },
 
-            // Configuration Firebase
+            // Configuration Firebase - REMPLACEZ PAR LA VÔTRE !
             firebaseConfig: {
-                apiKey: "AIzaSyCVhcOgKGV5e_S8WZ6sNgT0qGXNhJDFQnY",
-                authDomain: "airsoft-tactical.firebaseapp.com",
-                databaseURL: "https://airsoft-tactical-default-rtdb.europe-west1.firebasedatabase.app",
-                projectId: "airsoft-tactical",
-                storageBucket: "airsoft-tactical.appspot.com"
+                // COPIEZ ICI VOTRE CONFIGURATION FIREBASE
+                // Elle ressemble à ça :
+                apiKey: "VOTRE-API-KEY",
+                authDomain: "VOTRE-PROJET.firebaseapp.com",
+                databaseURL: "https://VOTRE-PROJET.firebasedatabase.app",
+                projectId: "VOTRE-PROJET",
+                storageBucket: "VOTRE-PROJET.appspot.com",
+                messagingSenderId: "VOTRE-ID",
+                appId: "VOTRE-APP-ID"
             },
 
             // Initialisation
@@ -409,21 +446,25 @@
                 this.map = L.map('map', {
                     center: [48.8566, 2.3522],
                     zoom: 15,
+                    maxZoom: 21,  // Augmentation du zoom maximum
                     zoomControl: false,
                     attributionControl: false
                 });
 
-                // Couches de carte
+                // Couches de carte avec zoom étendu
                 this.layers.standard = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                    maxZoom: 19
+                    maxZoom: 21,  // Zoom maximum augmenté
+                    maxNativeZoom: 19  // Zoom natif max (au-delà, ça étire les tuiles)
                 });
 
                 this.layers.satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-                    maxZoom: 19
+                    maxZoom: 21,
+                    maxNativeZoom: 19
                 });
 
                 this.layers.tactical = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-                    maxZoom: 19
+                    maxZoom: 21,
+                    maxNativeZoom: 19
                 });
 
                 // Ajout couche par défaut
@@ -490,6 +531,9 @@
                 this.updateStatus('gpsStatus', accuracy < 50 ? '📍OK' : `📍${Math.round(accuracy)}m`);
                 this.updatePlayerMarker();
                 this.sharePosition();
+                
+                // Mettre à jour les distances des ennemis
+                this.updateEnemyDistances();
 
                 if (document.getElementById('map').classList.contains('hidden')) {
                     this.showMap();
@@ -918,6 +962,18 @@
                     console.error('Coordonnées invalides pour ennemi:', data);
                     return;
                 }
+                
+                // Calculer la distance si on a notre position
+                let distanceText = '';
+                if (this.state.position && this.state.position.lat && this.state.position.lng) {
+                    const distance = this.calculateDistance(
+                        this.state.position.lat, 
+                        this.state.position.lng,
+                        data.lat,
+                        data.lng
+                    );
+                    distanceText = `${distance}m`;
+                }
 
                 const icon = L.divIcon({
                     className: '',
@@ -928,10 +984,12 @@
                                            border-radius: 50%;
                                            box-shadow: 0 0 20px #ff0000;
                                            animation: enemyPulse 1s infinite;"></div>
-                               <div style="position: absolute; top: -20px; left: 50%; transform: translateX(-50%); 
-                                           background: #ff0000; color: white; padding: 2px 6px; border-radius: 4px; 
-                                           font-size: 10px; font-weight: bold; white-space: nowrap;">
-                                   ⚠️ ${data.reportedBy || 'ENNEMI'}
+                               <div style="position: absolute; top: -25px; left: 50%; transform: translateX(-50%); 
+                                           background: #ff0000; color: white; padding: 3px 8px; border-radius: 4px; 
+                                           font-size: 10px; font-weight: bold; white-space: nowrap;
+                                           border: 1px solid #ffff00; text-align: center;">
+                                   ⚠️ ${data.reportedBy || 'ENNEMI'}<br>
+                                   <span style="font-size: 12px; font-weight: bold;">${distanceText}</span>
                                </div>
                            </div>`,
                     iconSize: [30, 30],
@@ -942,12 +1000,13 @@
                 const marker = L.marker([data.lat, data.lng], {
                     icon,
                     zIndexOffset: 5000,
-                    draggable: false,  // IMPORTANT: empêcher le déplacement
-                    autoPan: false     // Empêcher le pan automatique
+                    draggable: false,
+                    autoPan: false
                 }).addTo(this.map);
 
                 this.markers.enemies[id] = marker;
-                console.log(`Ennemi créé à position fixe: ${data.lat}, ${data.lng}`);
+                marker._enemyData = data;  // Stocker les données pour mise à jour
+                console.log(`Ennemi créé à position fixe: ${data.lat}, ${data.lng} - Distance: ${distanceText}`);
 
                 // Auto-suppression après 30 secondes
                 const timeoutId = setTimeout(() => {
@@ -964,6 +1023,61 @@
 
                 // Stocker le timeout pour pouvoir l'annuler si besoin
                 marker._timeoutId = timeoutId;
+            },
+            
+            // Fonction pour calculer la distance entre deux points GPS
+            calculateDistance(lat1, lon1, lat2, lon2) {
+                const R = 6371000; // Rayon de la Terre en mètres
+                const dLat = (lat2 - lat1) * Math.PI / 180;
+                const dLon = (lon2 - lon1) * Math.PI / 180;
+                const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                          Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                          Math.sin(dLon/2) * Math.sin(dLon/2);
+                const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+                const distance = R * c;
+                return Math.round(distance); // Distance en mètres
+            },
+            
+            // Mettre à jour les distances des ennemis quand le joueur bouge
+            updateEnemyDistances() {
+                if (!this.state.position) return;
+                
+                Object.keys(this.markers.enemies).forEach(id => {
+                    const marker = this.markers.enemies[id];
+                    if (marker && marker._enemyData) {
+                        const data = marker._enemyData;
+                        const distance = this.calculateDistance(
+                            this.state.position.lat,
+                            this.state.position.lng,
+                            data.lat,
+                            data.lng
+                        );
+                        
+                        // Mettre à jour l'icône avec la nouvelle distance
+                        const newIcon = L.divIcon({
+                            className: '',
+                            html: `<div style="position: relative; width: 30px; height: 30px;">
+                                       <div style="width: 30px; height: 30px; 
+                                                   background: radial-gradient(circle, #ff0000, #cc0000);
+                                                   border: 3px solid #ffff00;
+                                                   border-radius: 50%;
+                                                   box-shadow: 0 0 20px #ff0000;
+                                                   animation: enemyPulse 1s infinite;"></div>
+                                       <div style="position: absolute; top: -25px; left: 50%; transform: translateX(-50%); 
+                                                   background: #ff0000; color: white; padding: 3px 8px; border-radius: 4px; 
+                                                   font-size: 10px; font-weight: bold; white-space: nowrap;
+                                                   border: 1px solid #ffff00; text-align: center;">
+                                           ⚠️ ${data.reportedBy || 'ENNEMI'}<br>
+                                           <span style="font-size: 12px; font-weight: bold;">${distance}m</span>
+                                       </div>
+                                   </div>`,
+                            iconSize: [30, 30],
+                            iconAnchor: [15, 15]
+                        });
+                        
+                        marker.setIcon(newIcon);
+                    }
+                });
             },
 
             startDrawing(latlng) {
@@ -1187,6 +1301,20 @@
             centerPlayer() {
                 if (this.state.position) {
                     this.map.setView([this.state.position.lat, this.state.position.lng], 17);
+                }
+            },
+            
+            zoomIn() {
+                const currentZoom = this.map.getZoom();
+                if (currentZoom < 21) {
+                    this.map.setZoom(currentZoom + 1);
+                }
+            },
+            
+            zoomOut() {
+                const currentZoom = this.map.getZoom();
+                if (currentZoom > 1) {
+                    this.map.setZoom(currentZoom - 1);
                 }
             },
 
