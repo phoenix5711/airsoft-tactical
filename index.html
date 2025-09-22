@@ -341,6 +341,7 @@
                 if (!this.firebase.db || !this.state.teamCode) return;
 
                 const team = this.state.teamCode;
+                console.log('Configuration Firebase pour équipe:', team);
                 
                 // Références
                 this.firebase.refs.team = ref(this.firebase.db, `teams/${team}`);
@@ -349,7 +350,13 @@
                 
                 // Écoute des changements
                 onValue(this.firebase.refs.team, (snap) => this.updateTeammates(snap.val()));
-                onValue(this.firebase.refs.enemies, (snap) => this.updateEnemies(snap.val()));
+                
+                // IMPORTANT: S'assurer que les ennemis sont bien écoutés
+                onValue(this.firebase.refs.enemies, (snap) => {
+                    console.log('=== MISE À JOUR ENNEMIS FIREBASE ===');
+                    console.log('Données reçues:', snap.val());
+                    this.updateEnemies(snap.val());
+                });
                 
                 // IMPORTANT: Forcer le chargement initial des obstacles
                 onValue(this.firebase.refs.obstacles, (snap) => {
@@ -357,9 +364,35 @@
                     this.updateObstacles(snap.val());
                 });
                 
-                // Forcer un rafraîchissement des obstacles après 1 seconde
+                // Nettoyer les vieux ennemis au démarrage
+                onValue(this.firebase.refs.enemies, (snap) => {
+                    const enemies = snap.val();
+                    if (enemies) {
+                        Object.keys(enemies).forEach(id => {
+                            const enemy = enemies[id];
+                            if (enemy.expiresAt && Date.now() > enemy.expiresAt) {
+                                console.log('Nettoyage vieil ennemi:', id);
+                                const enemyRef = ref(this.firebase.db, `enemies/${team}/${id}`);
+                                remove(enemyRef);
+                            }
+                        });
+                    }
+                }, { onlyOnce: true });
+                
+                // Forcer un rafraîchissement après 1 seconde
                 setTimeout(() => {
-                    console.log('Force refresh obstacles');
+                    console.log('Vérification manuelle des données');
+                    
+                    // Vérifier les ennemis
+                    onValue(this.firebase.refs.enemies, (snap) => {
+                        const enemies = snap.val();
+                        console.log('Ennemis actuels dans Firebase:', enemies);
+                        if (enemies) {
+                            console.log('Nombre d\'ennemis:', Object.keys(enemies).length);
+                        }
+                    }, { onlyOnce: true });
+                    
+                    // Vérifier les obstacles
                     onValue(this.firebase.refs.obstacles, (snap) => {
                         this.updateObstacles(snap.val());
                     }, { onlyOnce: true });
@@ -589,7 +622,8 @@
                             ], {
                                 color: obs.color || '#ff4444',
                                 weight: 3,
-                                fillOpacity: 0.3
+                                fillOpacity: 0.3,
+                                interactive: !this.state.enemyMode // Désactiver si mode ennemi actif
                             });
                         } else if (obs.type === 'circle' && obs.center && obs.radius) {
                             console.log('Création cercle:', id);
@@ -597,7 +631,8 @@
                                 radius: obs.radius,
                                 color: obs.color || '#ff4444',
                                 weight: 3,
-                                fillOpacity: 0.3
+                                fillOpacity: 0.3,
+                                interactive: !this.state.enemyMode // Désactiver si mode ennemi actif
                             });
                         }
 
@@ -605,23 +640,25 @@
                             layer._obstacleId = id;
                             layer._obstacleData = obs;
                             
-                            // Ajouter popup pour supprimer
-                            layer.bindPopup(`
-                                <div style="text-align: center;">
-                                    <b>Obstacle ${obs.type}</b><br>
-                                    Par: ${obs.createdBy || 'Inconnu'}<br>
-                                    <button onclick="App.removeObstacle('${id}')" style="
-                                        background: #ff4444; 
-                                        color: white; 
-                                        border: none; 
-                                        padding: 5px 10px; 
-                                        border-radius: 3px; 
-                                        cursor: pointer;
-                                        margin-top: 5px;
-                                        font-weight: bold;
-                                    ">Supprimer</button>
-                                </div>
-                            `);
+                            // Ajouter popup pour supprimer (si pas en mode ennemi)
+                            if (!this.state.enemyMode) {
+                                layer.bindPopup(`
+                                    <div style="text-align: center;">
+                                        <b>Obstacle ${obs.type}</b><br>
+                                        Par: ${obs.createdBy || 'Inconnu'}<br>
+                                        <button onclick="App.removeObstacle('${id}')" style="
+                                            background: #ff4444; 
+                                            color: white; 
+                                            border: none; 
+                                            padding: 5px 10px; 
+                                            border-radius: 3px; 
+                                            cursor: pointer;
+                                            margin-top: 5px;
+                                            font-weight: bold;
+                                        ">Supprimer</button>
+                                    </div>
+                                `);
+                            }
                             
                             this.groups.obstacles.addLayer(layer);
                             obstacleCount++;
@@ -728,10 +765,29 @@
                     if (this.state.drawMode) this.toggleDrawMode();
                     btn.classList.add('active');
                     this.map.getContainer().style.cursor = 'crosshair';
+                    
+                    // IMPORTANT: Désactiver temporairement l'interactivité des obstacles
+                    if (this.groups.obstacles) {
+                        this.groups.obstacles.eachLayer(layer => {
+                            layer._wasInteractive = layer.options.interactive;
+                            layer.setStyle({ interactive: false });
+                            layer.off('click');
+                        });
+                    }
+                    
                     this.notify('🎯 Cliquez pour marquer un ennemi');
                 } else {
                     btn.classList.remove('active');
                     this.map.getContainer().style.cursor = '';
+                    
+                    // Réactiver l'interactivité des obstacles
+                    if (this.groups.obstacles) {
+                        this.groups.obstacles.eachLayer(layer => {
+                            if (layer._wasInteractive !== false) {
+                                layer.setStyle({ interactive: true });
+                            }
+                        });
+                    }
                 }
             },
 
@@ -782,22 +838,36 @@
                 
                 const id = 'enemy_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
                 const data = {
-                    lat: parseFloat(latlng.lat.toFixed(6)), // Fixer la précision
-                    lng: parseFloat(latlng.lng.toFixed(6)), // Fixer la précision
+                    lat: parseFloat(latlng.lat.toFixed(6)),
+                    lng: parseFloat(latlng.lng.toFixed(6)),
                     reportedBy: this.state.playerName || 'JOUEUR',
                     timestamp: Date.now(),
                     expiresAt: Date.now() + 30000
                 };
 
-                console.log('Ajout ennemi à position:', data.lat, data.lng);
+                console.log('Ajout ennemi - ID:', id);
+                console.log('Position:', data.lat, data.lng);
+                console.log('Équipe:', this.state.teamCode);
+                console.log('Firebase connecté:', this.state.isConnected);
 
-                // Créer localement
-                this.createEnemyMarker(id, data);
-
-                // Partager si connecté
-                if (this.state.isConnected && this.firebase.db) {
+                // Partager IMMÉDIATEMENT si connecté (AVANT la création locale)
+                if (this.state.isConnected && this.firebase.db && this.state.teamCode) {
+                    console.log('Envoi à Firebase...');
                     const enemyRef = ref(this.firebase.db, `enemies/${this.state.teamCode}/${id}`);
-                    set(enemyRef, data).catch(err => console.error('Erreur partage ennemi:', err));
+                    set(enemyRef, data)
+                        .then(() => {
+                            console.log('✅ Ennemi envoyé à Firebase avec succès');
+                            // La création locale se fera automatiquement via updateEnemies()
+                        })
+                        .catch(err => {
+                            console.error('❌ Erreur partage Firebase:', err);
+                            // En cas d'erreur, créer quand même localement
+                            this.createEnemyMarker(id, data);
+                        });
+                } else {
+                    // Pas connecté, créer seulement localement
+                    console.log('Mode hors ligne - création locale seulement');
+                    this.createEnemyMarker(id, data);
                 }
 
                 this.notify('🎯 Ennemi marqué (30s)');
@@ -1144,6 +1214,7 @@
             console.log('Obstacles group:', App.groups.obstacles);
             console.log('Map has obstacles layer:', App.map && App.map.hasLayer(App.groups.obstacles));
             console.log('Firebase refs:', App.firebase.refs);
+            console.log('Ennemis locaux:', Object.keys(App.markers.enemies));
             
             // Forcer le rechargement des obstacles
             if (App.firebase.refs.obstacles) {
@@ -1152,6 +1223,31 @@
                     App.updateObstacles(snap.val());
                 }, { onlyOnce: true });
             }
+            
+            // Vérifier les ennemis dans Firebase
+            if (App.firebase.refs.enemies) {
+                onValue(App.firebase.refs.enemies, (snap) => {
+                    const enemies = snap.val();
+                    console.log('Ennemis dans Firebase:', enemies);
+                    if (enemies) {
+                        console.log('Nombre d\'ennemis Firebase:', Object.keys(enemies).length);
+                        Object.keys(enemies).forEach(id => {
+                            console.log(`- ${id}:`, enemies[id].reportedBy, 'à', enemies[id].lat, enemies[id].lng);
+                        });
+                    }
+                }, { onlyOnce: true });
+            }
+        };
+        
+        // Test d'ajout d'ennemi
+        window.testEnemy = function() {
+            console.log('=== TEST AJOUT ENNEMI ===');
+            const testPos = {
+                lat: 48.8566 + (Math.random() - 0.5) * 0.001,
+                lng: 2.3522 + (Math.random() - 0.5) * 0.001
+            };
+            console.log('Position test:', testPos);
+            App.addEnemy(testPos);
         };
         
         // IMPORTANT: Exposer la fonction removeObstacle pour les popups
