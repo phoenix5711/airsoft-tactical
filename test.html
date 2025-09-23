@@ -119,10 +119,43 @@
         
         .draw-panel.show { display: flex; gap: 5px; align-items: center; }
         
-        .color-picker { display: flex; gap: 4px; margin: 0 5px; }
-        .color { 
-            width: 14px; height: 14px; border-radius: 50%;
-            border: 1px solid #fff; cursor: pointer;
+        .obstacle-text-popup {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #1a1a1a;
+            border: 2px solid #00ff00;
+            border-radius: 10px;
+            padding: 20px;
+            z-index: 10000;
+            text-align: center;
+        }
+        
+        .obstacle-text-popup input {
+            width: 200px;
+            padding: 8px;
+            margin: 10px 0;
+            background: #333;
+            border: 1px solid #00ff00;
+            color: #00ff00;
+            border-radius: 5px;
+        }
+        
+        .obstacle-text-popup button {
+            padding: 8px 15px;
+            margin: 0 5px;
+            background: #00ff00;
+            color: #000;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        
+        .obstacle-text-popup button.cancel {
+            background: #ff4444;
+            color: white;
         }
         .color.active { border-color: #00ff00; box-shadow: 0 0 8px currentColor; }
         
