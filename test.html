@@ -157,6 +157,12 @@
             background: #ff4444;
             color: white;
         }
+        
+        .color-picker { display: flex; gap: 4px; margin: 0 5px; }
+        .color { 
+            width: 14px; height: 14px; border-radius: 50%;
+            border: 1px solid #fff; cursor: pointer;
+        }
         .color.active { border-color: #00ff00; box-shadow: 0 0 8px currentColor; }
         
         .hidden { display: none !important; }
@@ -274,6 +280,8 @@
         <div class="draw-panel" id="drawPanel">
             <button class="btn active" onclick="App.setDrawTool('rectangle')">▭</button>
             <button class="btn" onclick="App.setDrawTool('circle')">○</button>
+            <button class="btn" onclick="App.setDrawTool('polygon')">⬟</button>
+            <button class="btn" onclick="App.setDrawTool('line')">╱</button>
             <div class="color-picker">
                 <div class="color active" style="background: #ff4444;" onclick="App.setDrawColor('#ff4444', event)"></div>
                 <div class="color" style="background: #ffaa00;" onclick="App.setDrawColor('#ffaa00', event)"></div>
@@ -336,7 +344,10 @@
                 isDrawing: false,
                 drawStart: null,
                 preview: null,
-                deferredPrompt: null  // Pour l'installation PWA
+                deferredPrompt: null,  // Pour l'installation PWA
+                polygonPoints: [],     // Points du polygone en cours
+                linePoints: [],        // Points de la ligne en cours
+                tempMarkers: []        // Marqueurs temporaires pour les points
             },
 
             // Configuration Firebase - REMPLACEZ PAR LA VÔTRE !
@@ -514,6 +525,8 @@
                 // Événements carte
                 this.map.on('click', (e) => this.onMapClick(e));
                 this.map.on('mousemove', (e) => this.onMapMove(e));
+                this.map.on('contextmenu', (e) => this.onMapRightClick(e));
+                this.map.on('dblclick', (e) => this.onMapDoubleClick(e));
                 
                 // Forcer le chargement des obstacles existants après init complète
                 setTimeout(() => {
@@ -700,7 +713,7 @@
                                 color: obs.color || '#ff4444',
                                 weight: 3,
                                 fillOpacity: 0.3,
-                                interactive: !this.state.enemyMode // Désactiver si mode ennemi actif
+                                interactive: !this.state.enemyMode
                             });
                         } else if (obs.type === 'circle' && obs.center && obs.radius) {
                             console.log('Création cercle:', id);
@@ -709,7 +722,24 @@
                                 color: obs.color || '#ff4444',
                                 weight: 3,
                                 fillOpacity: 0.3,
-                                interactive: !this.state.enemyMode // Désactiver si mode ennemi actif
+                                interactive: !this.state.enemyMode
+                            });
+                        } else if (obs.type === 'polygon' && obs.points) {
+                            console.log('Création polygone:', id);
+                            const latlngs = obs.points.map(p => [p.lat, p.lng]);
+                            layer = L.polygon(latlngs, {
+                                color: obs.color || '#ff4444',
+                                weight: 3,
+                                fillOpacity: 0.3,
+                                interactive: !this.state.enemyMode
+                            });
+                        } else if (obs.type === 'line' && obs.points) {
+                            console.log('Création ligne:', id);
+                            const latlngs = obs.points.map(p => [p.lat, p.lng]);
+                            layer = L.polyline(latlngs, {
+                                color: obs.color || '#ff4444',
+                                weight: 4,
+                                interactive: !this.state.enemyMode
                             });
                         }
 
@@ -717,11 +747,49 @@
                             layer._obstacleId = id;
                             layer._obstacleData = obs;
                             
+                            // Ajouter le texte si présent
+                            if (obs.text && obs.text.trim()) {
+                                let center;
+                                if (obs.type === 'circle') {
+                                    center = [obs.center.lat, obs.center.lng];
+                                } else if (obs.type === 'rectangle') {
+                                    center = [(obs.bounds.south + obs.bounds.north) / 2, 
+                                             (obs.bounds.west + obs.bounds.east) / 2];
+                                } else if (obs.type === 'polygon' && obs.points.length > 0) {
+                                    // Centre du polygone
+                                    const sumLat = obs.points.reduce((sum, p) => sum + p.lat, 0);
+                                    const sumLng = obs.points.reduce((sum, p) => sum + p.lng, 0);
+                                    center = [sumLat / obs.points.length, sumLng / obs.points.length];
+                                } else if (obs.type === 'line' && obs.points.length >= 2) {
+                                    // Milieu de la ligne
+                                    const midIndex = Math.floor(obs.points.length / 2);
+                                    center = [obs.points[midIndex].lat, obs.points[midIndex].lng];
+                                }
+                                
+                                if (center) {
+                                    const textIcon = L.divIcon({
+                                        className: '',
+                                        html: `<div style="background: rgba(0,0,0,0.8); color: ${obs.color || '#ff4444'}; 
+                                                padding: 2px 6px; border-radius: 4px; border: 1px solid ${obs.color || '#ff4444'};
+                                                font-weight: bold; font-size: 11px; white-space: nowrap;">
+                                                ${obs.text}</div>`,
+                                        iconAnchor: [0, 0]
+                                    });
+                                    const textMarker = L.marker(center, {
+                                        icon: textIcon,
+                                        interactive: false,
+                                        zIndexOffset: 100
+                                    });
+                                    this.groups.obstacles.addLayer(textMarker);
+                                }
+                            }
+                            
                             // Ajouter popup pour supprimer (si pas en mode ennemi)
                             if (!this.state.enemyMode) {
                                 layer.bindPopup(`
                                     <div style="text-align: center;">
                                         <b>Obstacle ${obs.type}</b><br>
+                                        ${obs.text ? `Texte: ${obs.text}<br>` : ''}
                                         Par: ${obs.createdBy || 'Inconnu'}<br>
                                         <button onclick="App.removeObstacle('${id}')" style="
                                             background: #ff4444; 
@@ -893,10 +961,20 @@
                     btn.classList.add('active');
                     panel.classList.add('show');
                     this.map.getContainer().style.cursor = 'crosshair';
+                    this.notify('✏️ Cliquez pour dessiner');
                 } else {
                     btn.classList.remove('active');
                     panel.classList.remove('show');
                     this.map.getContainer().style.cursor = '';
+                    
+                    // Nettoyer les points temporaires
+                    this.clearTempMarkers();
+                    this.state.polygonPoints = [];
+                    this.state.linePoints = [];
+                    if (this.state.preview) {
+                        this.map.removeLayer(this.state.preview);
+                        this.state.preview = null;
+                    }
                 }
             },
 
@@ -907,10 +985,16 @@
                     this.addEnemy(e.latlng);
                     this.toggleEnemyMode();
                 } else if (this.state.drawMode) {
-                    if (!this.state.isDrawing) {
-                        this.startDrawing(e.latlng);
-                    } else {
-                        this.finishDrawing(e.latlng);
+                    if (this.state.drawTool === 'rectangle' || this.state.drawTool === 'circle') {
+                        if (!this.state.isDrawing) {
+                            this.startDrawing(e.latlng);
+                        } else {
+                            this.finishDrawing(e.latlng);
+                        }
+                    } else if (this.state.drawTool === 'polygon') {
+                        this.addPolygonPoint(e.latlng);
+                    } else if (this.state.drawTool === 'line') {
+                        this.addLinePoint(e.latlng);
                     }
                 }
             },
@@ -918,6 +1002,31 @@
             onMapMove(e) {
                 if (this.state.drawMode && this.state.isDrawing) {
                     this.updatePreview(e.latlng);
+                }
+            },
+            
+            onMapRightClick(e) {
+                if (this.state.drawMode) {
+                    e.originalEvent.preventDefault();
+                    
+                    if (this.state.drawTool === 'polygon' && this.state.polygonPoints.length >= 3) {
+                        this.finishPolygon();
+                    } else if (this.state.drawTool === 'line' && this.state.linePoints.length >= 2) {
+                        this.finishLine();
+                    }
+                }
+            },
+            
+            onMapDoubleClick(e) {
+                if (this.state.drawMode) {
+                    e.originalEvent.preventDefault();
+                    e.originalEvent.stopPropagation();
+                    
+                    if (this.state.drawTool === 'polygon' && this.state.polygonPoints.length >= 3) {
+                        this.finishPolygon();
+                    } else if (this.state.drawTool === 'line' && this.state.linePoints.length >= 2) {
+                        this.finishLine();
+                    }
                 }
             },
 
@@ -1150,47 +1259,256 @@
                     this.state.preview = null;
                 }
 
-                const id = 'obs_' + Date.now();
-                let data = {
-                    type: this.state.drawTool,
-                    color: this.state.drawColor,
-                    createdBy: this.state.playerName,
-                    timestamp: Date.now()
-                };
-
-                if (this.state.drawTool === 'rectangle') {
-                    const bounds = L.latLngBounds(this.state.drawStart, latlng);
-                    data.bounds = {
-                        north: bounds.getNorth(),
-                        south: bounds.getSouth(),
-                        east: bounds.getEast(),
-                        west: bounds.getWest()
+                // Demander le texte à l'utilisateur
+                this.showTextPrompt((text) => {
+                    const id = 'obs_' + Date.now();
+                    let data = {
+                        type: this.state.drawTool,
+                        color: this.state.drawColor,
+                        createdBy: this.state.playerName,
+                        timestamp: Date.now(),
+                        text: text || ''
                     };
-                } else {
-                    data.center = {lat: this.state.drawStart.lat, lng: this.state.drawStart.lng};
-                    data.radius = this.map.distance(this.state.drawStart, latlng);
-                }
 
-                // Sauvegarder si connecté
-                if (this.state.isConnected) {
-                    const obsRef = ref(this.firebase.db, `obstacles/${this.state.teamCode}/${id}`);
-                    set(obsRef, data);
-                }
+                    if (this.state.drawTool === 'rectangle') {
+                        const bounds = L.latLngBounds(this.state.drawStart, latlng);
+                        data.bounds = {
+                            north: bounds.getNorth(),
+                            south: bounds.getSouth(),
+                            east: bounds.getEast(),
+                            west: bounds.getWest()
+                        };
+                    } else {
+                        data.center = {lat: this.state.drawStart.lat, lng: this.state.drawStart.lng};
+                        data.radius = this.map.distance(this.state.drawStart, latlng);
+                    }
 
-                this.state.isDrawing = false;
-                this.state.drawStart = null;
+                    // Sauvegarder si connecté
+                    if (this.state.isConnected) {
+                        const obsRef = ref(this.firebase.db, `obstacles/${this.state.teamCode}/${id}`);
+                        set(obsRef, data);
+                    }
+
+                    this.state.isDrawing = false;
+                    this.state.drawStart = null;
+                });
             },
 
             setDrawTool(tool) {
+                // Nettoyer l'outil précédent
+                this.clearTempMarkers();
+                this.state.polygonPoints = [];
+                this.state.linePoints = [];
+                if (this.state.preview) {
+                    this.map.removeLayer(this.state.preview);
+                    this.state.preview = null;
+                }
+                this.state.isDrawing = false;
+                this.state.drawStart = null;
+                
+                // Définir le nouvel outil
                 this.state.drawTool = tool;
                 document.querySelectorAll('#drawPanel .btn').forEach(b => b.classList.remove('active'));
                 event.target.classList.add('active');
+                
+                // Instructions selon l'outil
+                if (tool === 'polygon') {
+                    this.notify('Cliquez pour dessiner un polygone');
+                } else if (tool === 'line') {
+                    this.notify('Cliquez pour dessiner une ligne');
+                } else if (tool === 'rectangle') {
+                    this.notify('Cliquez et maintenez pour dessiner');
+                } else if (tool === 'circle') {
+                    this.notify('Cliquez au centre puis définissez le rayon');
+                }
             },
 
             setDrawColor(color, e) {
                 this.state.drawColor = color;
                 document.querySelectorAll('.color').forEach(c => c.classList.remove('active'));
                 e.target.classList.add('active');
+            },
+            
+            // Nouvelles méthodes pour les formes personnalisées
+            addPolygonPoint(latlng) {
+                this.state.polygonPoints.push(latlng);
+                
+                // Ajouter un marqueur temporaire
+                const marker = L.circleMarker(latlng, {
+                    radius: 5,
+                    color: this.state.drawColor,
+                    fillColor: this.state.drawColor,
+                    fillOpacity: 0.8
+                });
+                marker.addTo(this.map);
+                this.state.tempMarkers.push(marker);
+                
+                // Mettre à jour l'aperçu
+                if (this.state.preview) {
+                    this.map.removeLayer(this.state.preview);
+                }
+                
+                if (this.state.polygonPoints.length >= 2) {
+                    this.state.preview = L.polyline(this.state.polygonPoints, {
+                        color: this.state.drawColor,
+                        dashArray: '5, 5'
+                    });
+                    this.state.preview.addTo(this.map);
+                }
+                
+                // Instructions
+                if (this.state.polygonPoints.length === 1) {
+                    this.notify('Continuez à cliquer pour ajouter des points');
+                } else if (this.state.polygonPoints.length >= 3) {
+                    this.notify('Clic droit ou double-clic pour terminer');
+                }
+            },
+            
+            addLinePoint(latlng) {
+                this.state.linePoints.push(latlng);
+                
+                // Ajouter un marqueur temporaire
+                const marker = L.circleMarker(latlng, {
+                    radius: 5,
+                    color: this.state.drawColor,
+                    fillColor: this.state.drawColor,
+                    fillOpacity: 0.8
+                });
+                marker.addTo(this.map);
+                this.state.tempMarkers.push(marker);
+                
+                // Mettre à jour l'aperçu
+                if (this.state.preview) {
+                    this.map.removeLayer(this.state.preview);
+                }
+                
+                if (this.state.linePoints.length >= 2) {
+                    this.state.preview = L.polyline(this.state.linePoints, {
+                        color: this.state.drawColor,
+                        weight: 4
+                    });
+                    this.state.preview.addTo(this.map);
+                }
+                
+                // Instructions
+                if (this.state.linePoints.length === 1) {
+                    this.notify('Cliquez pour ajouter le point suivant');
+                } else {
+                    this.notify('Clic droit ou double-clic pour terminer');
+                }
+            },
+            
+            clearTempMarkers() {
+                this.state.tempMarkers.forEach(marker => {
+                    this.map.removeLayer(marker);
+                });
+                this.state.tempMarkers = [];
+            },
+            
+            finishPolygon() {
+                if (this.state.polygonPoints.length < 3) {
+                    this.notify('Un polygone nécessite au moins 3 points');
+                    return;
+                }
+                
+                this.showTextPrompt((text) => {
+                    const id = 'obs_' + Date.now();
+                    const data = {
+                        type: 'polygon',
+                        color: this.state.drawColor,
+                        createdBy: this.state.playerName,
+                        timestamp: Date.now(),
+                        points: this.state.polygonPoints.map(p => ({lat: p.lat, lng: p.lng})),
+                        text: text || ''
+                    };
+                    
+                    if (this.state.isConnected) {
+                        const obsRef = ref(this.firebase.db, `obstacles/${this.state.teamCode}/${id}`);
+                        set(obsRef, data);
+                    }
+                    
+                    // Nettoyer
+                    this.clearTempMarkers();
+                    if (this.state.preview) {
+                        this.map.removeLayer(this.state.preview);
+                        this.state.preview = null;
+                    }
+                    this.state.polygonPoints = [];
+                });
+            },
+            
+            finishLine() {
+                if (this.state.linePoints.length < 2) {
+                    this.notify('Une ligne nécessite au moins 2 points');
+                    return;
+                }
+                
+                this.showTextPrompt((text) => {
+                    const id = 'obs_' + Date.now();
+                    const data = {
+                        type: 'line',
+                        color: this.state.drawColor,
+                        createdBy: this.state.playerName,
+                        timestamp: Date.now(),
+                        points: this.state.linePoints.map(p => ({lat: p.lat, lng: p.lng})),
+                        text: text || ''
+                    };
+                    
+                    if (this.state.isConnected) {
+                        const obsRef = ref(this.firebase.db, `obstacles/${this.state.teamCode}/${id}`);
+                        set(obsRef, data);
+                    }
+                    
+                    // Nettoyer
+                    this.clearTempMarkers();
+                    if (this.state.preview) {
+                        this.map.removeLayer(this.state.preview);
+                        this.state.preview = null;
+                    }
+                    this.state.linePoints = [];
+                });
+            },
+            
+            showTextPrompt(callback) {
+                // Créer la popup
+                const popup = document.createElement('div');
+                popup.className = 'obstacle-text-popup';
+                popup.innerHTML = `
+                    <h3>Ajouter un texte (optionnel)</h3>
+                    <input type="text" id="obstacleText" placeholder="Ex: Zone de tir, Mur..." maxlength="20">
+                    <div>
+                        <button onclick="App.submitText()">OK</button>
+                        <button class="cancel" onclick="App.submitText(true)">Annuler</button>
+                    </div>
+                `;
+                document.body.appendChild(popup);
+                
+                // Stocker le callback
+                this._textCallback = callback;
+                
+                // Focus sur l'input
+                setTimeout(() => {
+                    document.getElementById('obstacleText').focus();
+                }, 100);
+                
+                // Gérer Enter
+                document.getElementById('obstacleText').addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') {
+                        this.submitText();
+                    }
+                });
+            },
+            
+            submitText(cancel = false) {
+                const popup = document.querySelector('.obstacle-text-popup');
+                const text = cancel ? '' : document.getElementById('obstacleText').value.trim();
+                
+                if (popup) popup.remove();
+                
+                if (this._textCallback) {
+                    this._textCallback(text);
+                    this._textCallback = null;
+                }
             },
 
             showQRCode() {
@@ -1447,9 +1765,13 @@
             App.addEnemy(testPos);
         };
         
-        // IMPORTANT: Exposer la fonction removeObstacle pour les popups
+        // IMPORTANT: Exposer les fonctions pour les popups
         window.removeObstacle = function(id) {
             App.removeObstacle(id);
+        };
+        
+        window.App.submitText = function(cancel) {
+            App.submitText(cancel);
         };
 
         // Charger config au démarrage
