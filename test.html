@@ -130,6 +130,12 @@
             padding: 20px;
             z-index: 10000;
             text-align: center;
+            box-shadow: 0 0 30px rgba(0, 255, 0, 0.7);
+        }
+        
+        .obstacle-text-popup h3 {
+            color: #00ff00;
+            margin: 0 0 15px 0;
         }
         
         .obstacle-text-popup input {
@@ -156,6 +162,10 @@
         .obstacle-text-popup button.cancel {
             background: #ff4444;
             color: white;
+        }
+        
+        .obstacle-text-popup button:hover {
+            opacity: 0.8;
         }
         
         .color-picker { display: flex; gap: 4px; margin: 0 5px; }
@@ -360,7 +370,7 @@
                 projectId: "airsoft-tactical",
                 storageBucket: "airsoft-tactical.appspot.com",
                 messagingSenderId: "Admin01",
-                appId: "0001"
+                appId: "001"
             },
 
             // Initialisation
@@ -1259,6 +1269,11 @@
                     this.state.preview = null;
                 }
 
+                // Vérifier qu'il n'y a pas déjà un popup ouvert
+                if (document.querySelector('.obstacle-text-popup')) {
+                    return;
+                }
+
                 // Demander le texte à l'utilisateur
                 this.showTextPrompt((text) => {
                     const id = 'obs_' + Date.now();
@@ -1284,13 +1299,25 @@
                     }
 
                     // Sauvegarder si connecté
-                    if (this.state.isConnected) {
+                    if (this.state.isConnected && this.firebase.db) {
                         const obsRef = ref(this.firebase.db, `obstacles/${this.state.teamCode}/${id}`);
                         set(obsRef, data);
+                    } else {
+                        // Ajouter localement si pas connecté
+                        console.log('Mode hors ligne - ajout local de l\'obstacle');
+                        // Forcer la mise à jour locale
+                        setTimeout(() => {
+                            onValue(this.firebase.refs.obstacles, (snap) => {
+                                const currentData = snap.val() || {};
+                                currentData[id] = data;
+                                this.updateObstacles(currentData);
+                            }, { onlyOnce: true });
+                        }, 100);
                     }
 
                     this.state.isDrawing = false;
                     this.state.drawStart = null;
+                    this.notify('Obstacle créé');
                 });
             },
 
@@ -1411,6 +1438,11 @@
                     return;
                 }
                 
+                // Vérifier qu'il n'y a pas déjà un popup ouvert
+                if (document.querySelector('.obstacle-text-popup')) {
+                    return;
+                }
+                
                 this.showTextPrompt((text) => {
                     const id = 'obs_' + Date.now();
                     const data = {
@@ -1422,9 +1454,12 @@
                         text: text || ''
                     };
                     
-                    if (this.state.isConnected) {
+                    if (this.state.isConnected && this.firebase.db) {
                         const obsRef = ref(this.firebase.db, `obstacles/${this.state.teamCode}/${id}`);
                         set(obsRef, data);
+                    } else {
+                        // Ajouter localement si pas connecté
+                        console.log('Mode hors ligne - ajout local du polygone');
                     }
                     
                     // Nettoyer
@@ -1434,12 +1469,18 @@
                         this.state.preview = null;
                     }
                     this.state.polygonPoints = [];
+                    this.notify('Polygone créé');
                 });
             },
             
             finishLine() {
                 if (this.state.linePoints.length < 2) {
                     this.notify('Une ligne nécessite au moins 2 points');
+                    return;
+                }
+                
+                // Vérifier qu'il n'y a pas déjà un popup ouvert
+                if (document.querySelector('.obstacle-text-popup')) {
                     return;
                 }
                 
@@ -1454,9 +1495,12 @@
                         text: text || ''
                     };
                     
-                    if (this.state.isConnected) {
+                    if (this.state.isConnected && this.firebase.db) {
                         const obsRef = ref(this.firebase.db, `obstacles/${this.state.teamCode}/${id}`);
                         set(obsRef, data);
+                    } else {
+                        // Ajouter localement si pas connecté
+                        console.log('Mode hors ligne - ajout local de la ligne');
                     }
                     
                     // Nettoyer
@@ -1466,6 +1510,7 @@
                         this.state.preview = null;
                     }
                     this.state.linePoints = [];
+                    this.notify('Ligne créée');
                 });
             },
             
@@ -1477,8 +1522,8 @@
                     <h3>Ajouter un texte (optionnel)</h3>
                     <input type="text" id="obstacleText" placeholder="Ex: Zone de tir, Mur..." maxlength="20">
                     <div>
-                        <button onclick="App.submitText()">OK</button>
-                        <button class="cancel" onclick="App.submitText(true)">Annuler</button>
+                        <button id="textOkBtn">OK</button>
+                        <button id="textCancelBtn" class="cancel">Annuler</button>
                     </div>
                 `;
                 document.body.appendChild(popup);
@@ -1486,24 +1531,50 @@
                 // Stocker le callback
                 this._textCallback = callback;
                 
+                // Ajouter les événements aux boutons
+                document.getElementById('textOkBtn').addEventListener('click', () => {
+                    this.submitText();
+                });
+                
+                document.getElementById('textCancelBtn').addEventListener('click', () => {
+                    this.submitText(true);
+                });
+                
                 // Focus sur l'input
                 setTimeout(() => {
-                    document.getElementById('obstacleText').focus();
+                    const input = document.getElementById('obstacleText');
+                    if (input) input.focus();
                 }, 100);
                 
-                // Gérer Enter
+                // Gérer Enter pour valider
                 document.getElementById('obstacleText').addEventListener('keypress', (e) => {
                     if (e.key === 'Enter') {
                         this.submitText();
+                    }
+                });
+                
+                // Gérer Escape pour annuler
+                document.addEventListener('keydown', this._escapeHandler = (e) => {
+                    if (e.key === 'Escape') {
+                        this.submitText(true);
                     }
                 });
             },
             
             submitText(cancel = false) {
                 const popup = document.querySelector('.obstacle-text-popup');
-                const text = cancel ? '' : document.getElementById('obstacleText').value.trim();
+                const textInput = document.getElementById('obstacleText');
+                const text = cancel ? '' : (textInput ? textInput.value.trim() : '');
                 
-                if (popup) popup.remove();
+                // Retirer le handler Escape
+                if (this._escapeHandler) {
+                    document.removeEventListener('keydown', this._escapeHandler);
+                    this._escapeHandler = null;
+                }
+                
+                if (popup) {
+                    popup.remove();
+                }
                 
                 if (this._textCallback) {
                     this._textCallback(text);
@@ -1768,10 +1839,6 @@
         // IMPORTANT: Exposer les fonctions pour les popups
         window.removeObstacle = function(id) {
             App.removeObstacle(id);
-        };
-        
-        window.App.submitText = function(cancel) {
-            App.submitText(cancel);
         };
 
         // Charger config au démarrage
