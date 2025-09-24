@@ -242,6 +242,59 @@
             box-shadow: 0 0 20px #ff0000;
             animation: enemyPulse 1s infinite;
         }
+        
+        .obstacle-text-icon {
+            display: flex !important;
+            justify-content: center !important;
+            align-items: center !important;
+            width: 100% !important;
+            height: 100% !important;
+        }
+        
+        .obstacle-text-icon > div {
+            display: inline-block !important;
+        }
+        
+        .leaflet-div-icon-text {
+            background: none !important;
+            border: none !important;
+            text-align: center !important;
+        }
+        
+        .leaflet-div-icon-text > div {
+            display: inline-block !important;
+            position: relative !important;
+        }
+        
+        .text-label-marker {
+            background: none !important;
+            border: none !important;
+        }
+        
+        .text-label-marker span {
+            position: absolute !important;
+            left: 50% !important;
+            top: 50% !important;
+            transform: translate(-50%, -50%) !important;
+        }
+        
+        .obstacle-label-div {
+            background: transparent !important;
+            border: none !important;
+            display: flex !important;
+            justify-content: center !important;
+            align-items: center !important;
+        }
+        
+        .obstacle-label-div > div {
+            display: flex !important;
+            justify-content: center !important;
+            align-items: center !important;
+        }
+        
+        .obstacle-label-div > div > div {
+            display: inline-block !important;
+        }
     </style>
 </head>
 <body>
@@ -802,33 +855,47 @@
                                 }
                                 
                                 if (center) {
+                                    // Approche simplifiée pour éviter les problèmes de rendu
+                                    const textContent = obs.text;
+                                    const textColor = obs.color || '#ff4444';
+                                    
+                                    // HTML avec style inline complet
+                                    const markerHtml = '<div style="' +
+                                        'position: relative;' +
+                                        'width: auto;' +
+                                        'height: auto;' +
+                                        '">' +
+                                        '<div style="' +
+                                        'display: inline-block;' +
+                                        'background: rgba(0,0,0,0.95);' +
+                                        'color: ' + textColor + ';' +
+                                        'padding: 15px 30px;' +
+                                        'border-radius: 15px;' +
+                                        'border: 5px solid ' + textColor + ';' +
+                                        'font-family: Arial, sans-serif;' +
+                                        'font-weight: 900;' +
+                                        'font-size: 36px;' +
+                                        'line-height: 1;' +
+                                        'text-align: center;' +
+                                        'text-shadow: 3px 3px 8px rgba(0,0,0,1);' +
+                                        'box-shadow: 0 0 30px rgba(0,0,0,1);' +
+                                        'white-space: nowrap;' +
+                                        'letter-spacing: 1px;' +
+                                        '">' + textContent + '</div>' +
+                                        '</div>';
+                                    
                                     const textIcon = L.divIcon({
-                                        className: '',
-                                        html: `<div style="
-                                            position: absolute;
-                                            left: 50%;
-                                            top: 50%;
-                                            transform: translate(-50%, -50%);
-                                            background: rgba(0,0,0,0.9); 
-                                            color: ${obs.color || '#ff4444'}; 
-                                            padding: 4px 10px; 
-                                            border-radius: 6px; 
-                                            border: 2px solid ${obs.color || '#ff4444'};
-                                            font-weight: bold; 
-                                            font-size: 16px; 
-                                            white-space: nowrap;
-                                            text-shadow: 0 0 4px rgba(0,0,0,0.8);
-                                            box-shadow: 0 0 10px rgba(0,0,0,0.5);
-                                            z-index: 1000;
-                                        ">${obs.text}</div>`,
-                                        iconSize: [0, 0],  // Taille 0 pour centrage parfait
-                                        iconAnchor: [0, 0]  // Ancrage au centre
+                                        html: markerHtml,
+                                        iconSize: null,
+                                        className: 'obstacle-label-div'
                                     });
+                                    
                                     const textMarker = L.marker(center, {
                                         icon: textIcon,
                                         interactive: false,
-                                        zIndexOffset: 500  // Plus haut pour être au-dessus
+                                        zIndexOffset: 10000
                                     });
+                                    
                                     this.groups.obstacles.addLayer(textMarker);
                                 }
                             }
