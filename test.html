@@ -310,12 +310,25 @@
         }
         
         /* S'assurer que les marqueurs ennemis sont toujours au-dessus */
-        .leaflet-marker-icon {
-            z-index: 1000 !important;
+        .leaflet-pane.leaflet-enemyPane {
+            z-index: 650 !important;
         }
         
-        .leaflet-tooltip {
-            z-index: 500 !important;
+        .leaflet-tooltip-pane {
+            z-index: 600 !important;
+        }
+        
+        .leaflet-overlay-pane {
+            z-index: 400 !important;
+        }
+        
+        /* Style pour les obstacles en mode édition */
+        .obstacle-editable {
+            cursor: pointer !important;
+        }
+        
+        .obstacle-popup {
+            z-index: 700 !important;
         }
     </style>
 </head>
@@ -577,15 +590,19 @@
                 this.map = L.map('map', {
                     center: [48.8566, 2.3522],
                     zoom: 15,
-                    maxZoom: 21,  // Augmentation du zoom maximum
+                    maxZoom: 21,
                     zoomControl: false,
                     attributionControl: false
                 });
 
+                // Créer un pane personnalisé pour les ennemis (au-dessus de tout)
+                this.map.createPane('enemyPane');
+                this.map.getPane('enemyPane').style.zIndex = 650; // Au-dessus des tooltips (600)
+
                 // Couches de carte avec zoom étendu
                 this.layers.standard = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                    maxZoom: 21,  // Zoom maximum augmenté
-                    maxNativeZoom: 19  // Zoom natif max (au-delà, ça étire les tuiles)
+                    maxZoom: 21,
+                    maxNativeZoom: 19
                 });
 
                 this.layers.satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
@@ -835,10 +852,16 @@
                         }
 
                         if (layer) {
+                            // IMPORTANT: Stocker les métadonnées AVANT d'ajouter au groupe
                             layer._obstacleId = id;
                             layer._obstacleData = obs;
                             
-                            // Ajouter le texte si présent
+                            console.log('Layer créé avec ID:', layer._obstacleId, 'Data:', layer._obstacleData);
+                            
+                            // Ajouter le layer au groupe AVANT le tooltip
+                            this.groups.obstacles.addLayer(layer);
+                            
+                            // Ajouter le texte si présent (APRÈS avoir ajouté le layer)
                             if (obs.text && obs.text.trim()) {
                                 let center;
                                 if (obs.type === 'circle') {
@@ -913,7 +936,6 @@
                                 }
                             }
                             
-                            this.groups.obstacles.addLayer(layer);
                             obstacleCount++;
                         }
                     } catch (error) {
@@ -930,17 +952,27 @@
             },
             
             removeObstacle(id) {
-                console.log('Suppression obstacle:', id);
+                console.log('Suppression obstacle demandée:', id);
                 
-                // Supprimer de Firebase
+                // Fermer le popup d'abord
+                this.map.closePopup();
+                
+                // Supprimer de Firebase si connecté
                 if (this.state.isConnected && this.firebase.db) {
                     const obsRef = ref(this.firebase.db, `obstacles/${this.state.teamCode}/${id}`);
                     remove(obsRef).then(() => {
                         console.log('Obstacle supprimé de Firebase');
-                        this.notify('Obstacle supprimé');
+                        this.notify('✅ Obstacle supprimé');
+                        
+                        // Recharger les obstacles pour mettre à jour l'affichage
+                        if (this.firebase.refs.obstacles) {
+                            onValue(this.firebase.refs.obstacles, (snap) => {
+                                this.updateObstacles(snap.val());
+                            }, { onlyOnce: true });
+                        }
                     }).catch(err => {
                         console.error('Erreur suppression:', err);
-                        this.notify('Erreur suppression');
+                        this.notify('❌ Erreur suppression');
                     });
                 } else {
                     // Suppression locale seulement
@@ -949,11 +981,8 @@
                             this.groups.obstacles.removeLayer(layer);
                         }
                     });
-                    this.notify('Obstacle supprimé (local)');
+                    this.notify('✅ Obstacle supprimé (local)');
                 }
-                
-                // Fermer le popup
-                this.map.closePopup();
             },
 
             updateEnemies(data) {
@@ -1085,48 +1114,99 @@
                     btn.classList.add('active');
                     this.map.getContainer().style.cursor = 'pointer';
                     
+                    let activatedCount = 0;
+                    
                     // ACTIVER l'interactivité des obstacles en mode édition
                     if (this.groups.obstacles) {
                         this.groups.obstacles.eachLayer(layer => {
-                            if (layer._obstacleId && layer._obstacleData && typeof layer.setStyle === 'function') {
-                                // Activer l'interactivité
-                                layer.options.interactive = true;
-                                layer.options.bubblingMouseEvents = true;
+                            // Ne traiter que les formes (pas les tooltips)
+                            if (layer instanceof L.Path && layer._obstacleId && layer._obstacleData) {
+                                console.log('Activation obstacle:', layer._obstacleId, layer);
+                                activatedCount++;
                                 
-                                // Appliquer le nouveau style avec surbrillance
+                                // Sauvegarder le style original
+                                layer._originalStyle = {
+                                    color: layer.options.color,
+                                    weight: layer.options.weight,
+                                    fillOpacity: layer.options.fillOpacity
+                                };
+                                
+                                // Forcer l'interactivité
+                                layer.options.interactive = true;
+                                
+                                // Style en mode édition
                                 layer.setStyle({
-                                    interactive: true,
-                                    bubblingMouseEvents: true,
-                                    fillOpacity: 0.5  // Plus visible en mode édition
+                                    fillOpacity: 0.6,
+                                    weight: 4,
+                                    dashArray: '5,5'
                                 });
                                 
-                                // Ajouter le popup de suppression
-                                const obs = layer._obstacleData;
-                                const popupContent = `
-                                    <div style="text-align: center;">
-                                        <b>Obstacle ${obs.type}</b><br>
-                                        ${obs.text ? `Texte: ${obs.text}<br>` : ''}
-                                        Par: ${obs.createdBy || 'Inconnu'}<br>
-                                        <button onclick="App.removeObstacle('${layer._obstacleId}')" style="
-                                            background: #ff4444; 
-                                            color: white; 
-                                            border: none; 
-                                            padding: 5px 10px; 
-                                            border-radius: 3px; 
-                                            cursor: pointer;
-                                            margin-top: 5px;
-                                            font-weight: bold;
-                                        ">Supprimer</button>
-                                    </div>
-                                `;
+                                // Effet hover
+                                layer.on('mouseover', function() {
+                                    if (App.state.editMode) {
+                                        this.setStyle({
+                                            fillOpacity: 0.8,
+                                            weight: 6
+                                        });
+                                    }
+                                });
                                 
-                                layer.unbindPopup();
-                                layer.bindPopup(popupContent);
+                                layer.on('mouseout', function() {
+                                    if (App.state.editMode) {
+                                        this.setStyle({
+                                            fillOpacity: 0.6,
+                                            weight: 4
+                                        });
+                                    }
+                                });
+                                
+                                // Handler de clic
+                                layer.on('click', function(e) {
+                                    if (App.state.editMode) {
+                                        console.log('Clic sur obstacle:', this._obstacleId);
+                                        L.DomEvent.stopPropagation(e);
+                                        
+                                        const obs = this._obstacleData;
+                                        const popupContent = `
+                                            <div style="text-align: center; min-width: 200px;">
+                                                <h4 style="margin: 10px 0; color: #00ff00;">Supprimer obstacle?</h4>
+                                                <p style="margin: 5px 0;">Type: <b>${obs.type}</b></p>
+                                                ${obs.text ? `<p style="margin: 5px 0;">Texte: <b>"${obs.text}"</b></p>` : ''}
+                                                <p style="margin: 5px 0; font-size: 12px; color: #888;">Par: ${obs.createdBy || 'Inconnu'}</p>
+                                                <div style="margin-top: 15px;">
+                                                    <button onclick="App.removeObstacle('${this._obstacleId}')" 
+                                                        style="background: #ff4444; color: white; border: none; 
+                                                               padding: 10px 20px; border-radius: 5px; cursor: pointer;
+                                                               font-weight: bold; font-size: 14px; margin: 5px;">
+                                                        🗑️ Confirmer suppression
+                                                    </button>
+                                                    <button onclick="App.map.closePopup()" 
+                                                        style="background: #666; color: white; border: none; 
+                                                               padding: 10px 20px; border-radius: 5px; cursor: pointer;
+                                                               font-weight: bold; font-size: 14px; margin: 5px;">
+                                                        Annuler
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        `;
+                                        
+                                        const popup = L.popup({
+                                            closeButton: true,
+                                            autoClose: false,
+                                            closeOnClick: false
+                                        })
+                                        .setLatLng(e.latlng)
+                                        .setContent(popupContent)
+                                        .openOn(App.map);
+                                    }
+                                });
                             }
                         });
                     }
                     
-                    this.notify('🗑️ Mode édition - Cliquez sur un obstacle pour le supprimer');
+                    console.log(`Mode édition activé: ${activatedCount} obstacles activés`);
+                    this.notify(`🗑️ Mode édition - ${activatedCount} obstacles modifiables`);
+                    
                 } else {
                     btn.classList.remove('active');
                     this.map.getContainer().style.cursor = '';
@@ -1134,25 +1214,30 @@
                     // DÉSACTIVER l'interactivité des obstacles
                     if (this.groups.obstacles) {
                         this.groups.obstacles.eachLayer(layer => {
-                            if (layer._obstacleId && typeof layer.setStyle === 'function') {
+                            if (layer instanceof L.Path && layer._obstacleId) {
+                                // Retirer les handlers
+                                layer.off('click');
+                                layer.off('mouseover');
+                                layer.off('mouseout');
+                                
                                 // Désactiver l'interactivité
                                 layer.options.interactive = false;
-                                layer.options.bubblingMouseEvents = false;
                                 
-                                // Remettre le style normal
-                                layer.setStyle({
-                                    interactive: false,
-                                    bubblingMouseEvents: false,
-                                    fillOpacity: 0.3  // Opacité normale
-                                });
-                                
-                                // Retirer le popup
-                                if (layer.unbindPopup) {
-                                    layer.unbindPopup();
+                                // Remettre le style original
+                                if (layer._originalStyle) {
+                                    layer.setStyle({
+                                        color: layer._originalStyle.color,
+                                        weight: layer._originalStyle.weight,
+                                        fillOpacity: layer._originalStyle.fillOpacity,
+                                        dashArray: null
+                                    });
                                 }
                             }
                         });
                     }
+                    
+                    // Fermer tout popup ouvert
+                    this.map.closePopup();
                 }
             },
 
@@ -1318,10 +1403,10 @@
                     iconAnchor: [15, 15]
                 });
 
-                // Créer le marqueur avec position FIXE (pas de draggable)
+                // Créer le marqueur dans le pane spécial pour être au-dessus
                 const marker = L.marker([data.lat, data.lng], {
                     icon,
-                    zIndexOffset: 20000,  // Très élevé pour être au-dessus de tout
+                    pane: 'enemyPane',  // Pane personnalisé au-dessus des tooltips
                     draggable: false,
                     autoPan: false
                 }).addTo(this.map);
@@ -2108,6 +2193,49 @@
                     console.log('   Pour forcer la mise à jour, tapez: App.updateEnemies(' + JSON.stringify(data) + ')');
                 }, { onlyOnce: true });
             });
+        };
+        
+        // Debug pour les obstacles
+        window.debugObstacles = function() {
+            console.log('=== DIAGNOSTIC OBSTACLES ===');
+            
+            if (!App.groups.obstacles) {
+                console.error('❌ Groupe obstacles non initialisé !');
+                return;
+            }
+            
+            console.log('1. Analyse du groupe obstacles:');
+            let count = 0;
+            let withId = 0;
+            let withData = 0;
+            let paths = 0;
+            
+            App.groups.obstacles.eachLayer(layer => {
+                count++;
+                if (layer._obstacleId) withId++;
+                if (layer._obstacleData) withData++;
+                if (layer instanceof L.Path) paths++;
+                
+                console.log(`   Layer ${count}:`, {
+                    type: layer.constructor.name,
+                    hasId: !!layer._obstacleId,
+                    id: layer._obstacleId,
+                    hasData: !!layer._obstacleData,
+                    data: layer._obstacleData,
+                    interactive: layer.options?.interactive,
+                    isPath: layer instanceof L.Path
+                });
+            });
+            
+            console.log('2. Résumé:');
+            console.log(`   - Total layers: ${count}`);
+            console.log(`   - Avec ID: ${withId}`);
+            console.log(`   - Avec Data: ${withData}`);
+            console.log(`   - Paths (formes): ${paths}`);
+            console.log(`   - Mode édition actif: ${App.state.editMode}`);
+            
+            console.log('3. Pour activer le mode édition:');
+            console.log('   App.toggleEditMode()');
         };
         
         // Forcer une synchronisation manuelle
