@@ -119,6 +119,55 @@
         
         .draw-panel.show { display: flex; gap: 5px; align-items: center; }
         
+        .obstacle-text-popup {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #1a1a1a;
+            border: 2px solid #00ff00;
+            border-radius: 10px;
+            padding: 20px;
+            z-index: 10000;
+            text-align: center;
+            box-shadow: 0 0 30px rgba(0, 255, 0, 0.7);
+        }
+        
+        .obstacle-text-popup h3 {
+            color: #00ff00;
+            margin: 0 0 15px 0;
+        }
+        
+        .obstacle-text-popup input {
+            width: 200px;
+            padding: 8px;
+            margin: 10px 0;
+            background: #333;
+            border: 1px solid #00ff00;
+            color: #00ff00;
+            border-radius: 5px;
+        }
+        
+        .obstacle-text-popup button {
+            padding: 8px 15px;
+            margin: 0 5px;
+            background: #00ff00;
+            color: #000;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        
+        .obstacle-text-popup button.cancel {
+            background: #ff4444;
+            color: white;
+        }
+        
+        .obstacle-text-popup button:hover {
+            opacity: 0.8;
+        }
+        
         .color-picker { display: flex; gap: 4px; margin: 0 5px; }
         .color { 
             width: 14px; height: 14px; border-radius: 50%;
@@ -193,6 +242,94 @@
             box-shadow: 0 0 20px #ff0000;
             animation: enemyPulse 1s infinite;
         }
+        
+        .obstacle-text-icon {
+            display: flex !important;
+            justify-content: center !important;
+            align-items: center !important;
+            width: 100% !important;
+            height: 100% !important;
+        }
+        
+        .obstacle-text-icon > div {
+            display: inline-block !important;
+        }
+        
+        .leaflet-div-icon-text {
+            background: none !important;
+            border: none !important;
+            text-align: center !important;
+        }
+        
+        .leaflet-div-icon-text > div {
+            display: inline-block !important;
+            position: relative !important;
+        }
+        
+        .text-label-marker {
+            background: none !important;
+            border: none !important;
+        }
+        
+        .text-label-marker span {
+            position: absolute !important;
+            left: 50% !important;
+            top: 50% !important;
+            transform: translate(-50%, -50%) !important;
+        }
+        
+        .obstacle-label-div {
+            background: transparent !important;
+            border: none !important;
+            display: flex !important;
+            justify-content: center !important;
+            align-items: center !important;
+        }
+        
+        .obstacle-label-div > div {
+            display: flex !important;
+            justify-content: center !important;
+            align-items: center !important;
+        }
+        
+        .obstacle-label-div > div > div {
+            display: inline-block !important;
+        }
+        
+        .obstacle-text-tooltip {
+            background: none !important;
+            border: none !important;
+            box-shadow: none !important;
+            padding: 0 !important;
+            z-index: 500 !important;  /* Sous les ennemis */
+        }
+        
+        .obstacle-text-tooltip div {
+            text-shadow: 2px 2px 4px rgba(0,0,0,1);
+            box-shadow: 0 0 15px rgba(0,0,0,0.8);
+        }
+        
+        /* S'assurer que les marqueurs ennemis sont toujours au-dessus */
+        .leaflet-pane.leaflet-enemyPane {
+            z-index: 650 !important;
+        }
+        
+        .leaflet-tooltip-pane {
+            z-index: 600 !important;
+        }
+        
+        .leaflet-overlay-pane {
+            z-index: 400 !important;
+        }
+        
+        /* Style pour les obstacles en mode édition */
+        .obstacle-editable {
+            cursor: pointer !important;
+        }
+        
+        .obstacle-popup {
+            z-index: 700 !important;
+        }
     </style>
 </head>
 <body>
@@ -235,12 +372,15 @@
             <button class="btn" onclick="App.recalibrateGPS()">🔄</button>
             <button class="btn" id="enemyBtn" onclick="App.toggleEnemyMode()">🎯</button>
             <button class="btn" id="drawBtn" onclick="App.toggleDrawMode()">✏️</button>
+            <button class="btn" id="editBtn" onclick="App.toggleEditMode()">🗑️</button>
             <button class="btn" onclick="App.showQRCode()">📲</button>
         </div>
 
         <div class="draw-panel" id="drawPanel">
             <button class="btn active" onclick="App.setDrawTool('rectangle')">▭</button>
             <button class="btn" onclick="App.setDrawTool('circle')">○</button>
+            <button class="btn" onclick="App.setDrawTool('polygon')">⬟</button>
+            <button class="btn" onclick="App.setDrawTool('line')">╱</button>
             <div class="color-picker">
                 <div class="color active" style="background: #ff4444;" onclick="App.setDrawColor('#ff4444', event)"></div>
                 <div class="color" style="background: #ffaa00;" onclick="App.setDrawColor('#ffaa00', event)"></div>
@@ -298,12 +438,16 @@
                 isConnected: false,
                 enemyMode: false,
                 drawMode: false,
+                editMode: false,        // Mode édition pour supprimer
                 drawTool: 'rectangle',
                 drawColor: '#ff4444',
                 isDrawing: false,
                 drawStart: null,
                 preview: null,
-                deferredPrompt: null  // Pour l'installation PWA
+                deferredPrompt: null,  // Pour l'installation PWA
+                polygonPoints: [],     // Points du polygone en cours
+                linePoints: [],        // Points de la ligne en cours
+                tempMarkers: []        // Marqueurs temporaires pour les points
             },
 
             // Configuration Firebase - REMPLACEZ PAR LA VÔTRE !
@@ -446,15 +590,19 @@
                 this.map = L.map('map', {
                     center: [48.8566, 2.3522],
                     zoom: 15,
-                    maxZoom: 21,  // Augmentation du zoom maximum
+                    maxZoom: 21,
                     zoomControl: false,
                     attributionControl: false
                 });
 
+                // Créer un pane personnalisé pour les ennemis (au-dessus de tout)
+                this.map.createPane('enemyPane');
+                this.map.getPane('enemyPane').style.zIndex = 650; // Au-dessus des tooltips (600)
+
                 // Couches de carte avec zoom étendu
                 this.layers.standard = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                    maxZoom: 21,  // Zoom maximum augmenté
-                    maxNativeZoom: 19  // Zoom natif max (au-delà, ça étire les tuiles)
+                    maxZoom: 21,
+                    maxNativeZoom: 19
                 });
 
                 this.layers.satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
@@ -481,6 +629,8 @@
                 // Événements carte
                 this.map.on('click', (e) => this.onMapClick(e));
                 this.map.on('mousemove', (e) => this.onMapMove(e));
+                this.map.on('contextmenu', (e) => this.onMapRightClick(e));
+                this.map.on('dblclick', (e) => this.onMapDoubleClick(e));
                 
                 // Forcer le chargement des obstacles existants après init complète
                 setTimeout(() => {
@@ -667,7 +817,8 @@
                                 color: obs.color || '#ff4444',
                                 weight: 3,
                                 fillOpacity: 0.3,
-                                interactive: !this.state.enemyMode // Désactiver si mode ennemi actif
+                                interactive: false,
+                                bubblingMouseEvents: false  // Empêche la propagation des clics
                             });
                         } else if (obs.type === 'circle' && obs.center && obs.radius) {
                             console.log('Création cercle:', id);
@@ -676,35 +827,115 @@
                                 color: obs.color || '#ff4444',
                                 weight: 3,
                                 fillOpacity: 0.3,
-                                interactive: !this.state.enemyMode // Désactiver si mode ennemi actif
+                                interactive: false,
+                                bubblingMouseEvents: false
+                            });
+                        } else if (obs.type === 'polygon' && obs.points) {
+                            console.log('Création polygone:', id);
+                            const latlngs = obs.points.map(p => [p.lat, p.lng]);
+                            layer = L.polygon(latlngs, {
+                                color: obs.color || '#ff4444',
+                                weight: 3,
+                                fillOpacity: 0.3,
+                                interactive: false,
+                                bubblingMouseEvents: false
+                            });
+                        } else if (obs.type === 'line' && obs.points) {
+                            console.log('Création ligne:', id);
+                            const latlngs = obs.points.map(p => [p.lat, p.lng]);
+                            layer = L.polyline(latlngs, {
+                                color: obs.color || '#ff4444',
+                                weight: 4,
+                                interactive: false,
+                                bubblingMouseEvents: false
                             });
                         }
 
                         if (layer) {
+                            // IMPORTANT: Stocker les métadonnées AVANT d'ajouter au groupe
                             layer._obstacleId = id;
                             layer._obstacleData = obs;
                             
-                            // Ajouter popup pour supprimer (si pas en mode ennemi)
-                            if (!this.state.enemyMode) {
-                                layer.bindPopup(`
-                                    <div style="text-align: center;">
-                                        <b>Obstacle ${obs.type}</b><br>
-                                        Par: ${obs.createdBy || 'Inconnu'}<br>
-                                        <button onclick="App.removeObstacle('${id}')" style="
-                                            background: #ff4444; 
-                                            color: white; 
-                                            border: none; 
-                                            padding: 5px 10px; 
-                                            border-radius: 3px; 
-                                            cursor: pointer;
-                                            margin-top: 5px;
-                                            font-weight: bold;
-                                        ">Supprimer</button>
-                                    </div>
-                                `);
+                            console.log('Layer créé avec ID:', layer._obstacleId, 'Data:', layer._obstacleData);
+                            
+                            // Ajouter le layer au groupe AVANT le tooltip
+                            this.groups.obstacles.addLayer(layer);
+                            
+                            // Ajouter le texte si présent (APRÈS avoir ajouté le layer)
+                            if (obs.text && obs.text.trim()) {
+                                let center;
+                                if (obs.type === 'circle') {
+                                    center = [obs.center.lat, obs.center.lng];
+                                } else if (obs.type === 'rectangle') {
+                                    center = [(obs.bounds.south + obs.bounds.north) / 2, 
+                                             (obs.bounds.west + obs.bounds.east) / 2];
+                                } else if (obs.type === 'polygon' && obs.points.length > 0) {
+                                    // Centroïde du polygone (méthode plus précise)
+                                    let area = 0;
+                                    let x = 0;
+                                    let y = 0;
+                                    const points = obs.points;
+                                    const n = points.length;
+                                    
+                                    // Calcul du centroïde géométrique
+                                    for (let i = 0; i < n; i++) {
+                                        const j = (i + 1) % n;
+                                        const xi = points[i].lng;
+                                        const yi = points[i].lat;
+                                        const xj = points[j].lng;
+                                        const yj = points[j].lat;
+                                        const a = xi * yj - xj * yi;
+                                        area += a;
+                                        x += (xi + xj) * a;
+                                        y += (yi + yj) * a;
+                                    }
+                                    
+                                    if (area !== 0) {
+                                        area *= 3;
+                                        center = [y / area, x / area];
+                                    } else {
+                                        // Fallback au centre moyen si l'aire est 0
+                                        const sumLat = points.reduce((sum, p) => sum + p.lat, 0);
+                                        const sumLng = points.reduce((sum, p) => sum + p.lng, 0);
+                                        center = [sumLat / n, sumLng / n];
+                                    }
+                                } else if (obs.type === 'line' && obs.points.length >= 2) {
+                                    // Milieu de la ligne
+                                    const midIndex = Math.floor(obs.points.length / 2);
+                                    center = [obs.points[midIndex].lat, obs.points[midIndex].lng];
+                                }
+                                
+                                if (center) {
+                                    const textContent = obs.text;
+                                    const textColor = obs.color || '#ff4444';
+                                    
+                                    // Utiliser un tooltip permanent au lieu d'un marqueur
+                                    const textTooltip = L.tooltip({
+                                        permanent: true,
+                                        direction: 'center',
+                                        className: 'obstacle-text-tooltip',
+                                        offset: [0, 0],
+                                        interactive: false  // Non interactif pour ne pas bloquer les clics
+                                    }).setContent(`<div style="
+                                        background: rgba(0,0,0,0.9);
+                                        color: ${textColor};
+                                        padding: 8px 15px;
+                                        border-radius: 8px;
+                                        border: 2px solid ${textColor};
+                                        font-weight: bold;
+                                        font-size: 18px;
+                                        text-align: center;
+                                        white-space: nowrap;
+                                        pointer-events: none;
+                                        ">${textContent}</div>`);
+                                    
+                                    // Attacher le tooltip à la forme elle-même
+                                    if (layer) {
+                                        layer.bindTooltip(textTooltip);
+                                    }
+                                }
                             }
                             
-                            this.groups.obstacles.addLayer(layer);
                             obstacleCount++;
                         }
                     } catch (error) {
@@ -721,17 +952,27 @@
             },
             
             removeObstacle(id) {
-                console.log('Suppression obstacle:', id);
+                console.log('Suppression obstacle demandée:', id);
                 
-                // Supprimer de Firebase
+                // Fermer le popup d'abord
+                this.map.closePopup();
+                
+                // Supprimer de Firebase si connecté
                 if (this.state.isConnected && this.firebase.db) {
                     const obsRef = ref(this.firebase.db, `obstacles/${this.state.teamCode}/${id}`);
                     remove(obsRef).then(() => {
                         console.log('Obstacle supprimé de Firebase');
-                        this.notify('Obstacle supprimé');
+                        this.notify('✅ Obstacle supprimé');
+                        
+                        // Recharger les obstacles pour mettre à jour l'affichage
+                        if (this.firebase.refs.obstacles) {
+                            onValue(this.firebase.refs.obstacles, (snap) => {
+                                this.updateObstacles(snap.val());
+                            }, { onlyOnce: true });
+                        }
                     }).catch(err => {
                         console.error('Erreur suppression:', err);
-                        this.notify('Erreur suppression');
+                        this.notify('❌ Erreur suppression');
                     });
                 } else {
                     // Suppression locale seulement
@@ -740,11 +981,8 @@
                             this.groups.obstacles.removeLayer(layer);
                         }
                     });
-                    this.notify('Obstacle supprimé (local)');
+                    this.notify('✅ Obstacle supprimé (local)');
                 }
-                
-                // Fermer le popup
-                this.map.closePopup();
             },
 
             updateEnemies(data) {
@@ -821,32 +1059,16 @@
                 const btn = document.getElementById('enemyBtn');
                 
                 if (this.state.enemyMode) {
+                    // Désactiver les autres modes
                     if (this.state.drawMode) this.toggleDrawMode();
+                    if (this.state.editMode) this.toggleEditMode();
+                    
                     btn.classList.add('active');
                     this.map.getContainer().style.cursor = 'crosshair';
-                    
-                    // IMPORTANT: Désactiver temporairement l'interactivité des obstacles
-                    if (this.groups.obstacles) {
-                        this.groups.obstacles.eachLayer(layer => {
-                            layer._wasInteractive = layer.options.interactive;
-                            layer.setStyle({ interactive: false });
-                            layer.off('click');
-                        });
-                    }
-                    
                     this.notify('🎯 Cliquez pour marquer un ennemi');
                 } else {
                     btn.classList.remove('active');
                     this.map.getContainer().style.cursor = '';
-                    
-                    // Réactiver l'interactivité des obstacles
-                    if (this.groups.obstacles) {
-                        this.groups.obstacles.eachLayer(layer => {
-                            if (layer._wasInteractive !== false) {
-                                layer.setStyle({ interactive: true });
-                            }
-                        });
-                    }
                 }
             },
 
@@ -856,35 +1078,315 @@
                 const panel = document.getElementById('drawPanel');
                 
                 if (this.state.drawMode) {
+                    // Désactiver les autres modes
                     if (this.state.enemyMode) this.toggleEnemyMode();
+                    if (this.state.editMode) this.toggleEditMode();
+                    
                     btn.classList.add('active');
                     panel.classList.add('show');
                     this.map.getContainer().style.cursor = 'crosshair';
+                    this.notify('✏️ Mode dessin - Cliquez pour dessiner');
                 } else {
                     btn.classList.remove('active');
                     panel.classList.remove('show');
                     this.map.getContainer().style.cursor = '';
+                    
+                    // Nettoyer les points temporaires
+                    this.clearTempMarkers();
+                    this.state.polygonPoints = [];
+                    this.state.linePoints = [];
+                    if (this.state.preview) {
+                        this.map.removeLayer(this.state.preview);
+                        this.state.preview = null;
+                    }
                 }
+            },
+            
+            toggleEditMode() {
+                this.state.editMode = !this.state.editMode;
+                const btn = document.getElementById('editBtn');
+                
+                if (this.state.editMode) {
+                    // Désactiver les autres modes
+                    if (this.state.enemyMode) this.toggleEnemyMode();
+                    if (this.state.drawMode) this.toggleDrawMode();
+                    
+                    btn.classList.add('active');
+                    this.map.getContainer().style.cursor = 'pointer';
+                    
+                    // Recharger les obstacles pour s'assurer qu'ils sont bien configurés
+                    if (this.firebase.refs && this.firebase.refs.obstacles) {
+                        onValue(this.firebase.refs.obstacles, (snap) => {
+                            this.updateObstaclesForEdit(snap.val());
+                        }, { onlyOnce: true });
+                    } else {
+                        // Mode hors ligne - activer directement
+                        this.activateEditMode();
+                    }
+                    
+                    this.notify('🗑️ Mode édition activé - Cliquez sur un obstacle');
+                } else {
+                    btn.classList.remove('active');
+                    this.map.getContainer().style.cursor = '';
+                    
+                    // Recharger les obstacles en mode normal
+                    if (this.firebase.refs && this.firebase.refs.obstacles) {
+                        onValue(this.firebase.refs.obstacles, (snap) => {
+                            this.updateObstacles(snap.val());
+                        }, { onlyOnce: true });
+                    }
+                    
+                    this.map.closePopup();
+                }
+            },
+            
+            updateObstaclesForEdit(data) {
+                console.log('=== UPDATE OBSTACLES FOR EDIT ===');
+                
+                // Effacer et recréer pour s'assurer que tout est propre
+                if (this.groups.obstacles) {
+                    this.groups.obstacles.clearLayers();
+                }
+                
+                if (!data) {
+                    console.log('Aucun obstacle');
+                    return;
+                }
+                
+                Object.keys(data).forEach(id => {
+                    const obs = data[id];
+                    let layer = null;
+                    
+                    try {
+                        if (obs.type === 'rectangle' && obs.bounds) {
+                            layer = L.rectangle([
+                                [obs.bounds.south, obs.bounds.west],
+                                [obs.bounds.north, obs.bounds.east]
+                            ], {
+                                color: obs.color || '#ff4444',
+                                weight: 4,
+                                fillOpacity: 0.5,
+                                interactive: true,
+                                className: 'obstacle-editable'
+                            });
+                        } else if (obs.type === 'circle' && obs.center && obs.radius) {
+                            layer = L.circle([obs.center.lat, obs.center.lng], {
+                                radius: obs.radius,
+                                color: obs.color || '#ff4444',
+                                weight: 4,
+                                fillOpacity: 0.5,
+                                interactive: true,
+                                className: 'obstacle-editable'
+                            });
+                        } else if (obs.type === 'polygon' && obs.points) {
+                            const latlngs = obs.points.map(p => [p.lat, p.lng]);
+                            layer = L.polygon(latlngs, {
+                                color: obs.color || '#ff4444',
+                                weight: 4,
+                                fillOpacity: 0.5,
+                                interactive: true,
+                                className: 'obstacle-editable'
+                            });
+                        } else if (obs.type === 'line' && obs.points) {
+                            const latlngs = obs.points.map(p => [p.lat, p.lng]);
+                            layer = L.polyline(latlngs, {
+                                color: obs.color || '#ff4444',
+                                weight: 6,
+                                interactive: true,
+                                className: 'obstacle-editable'
+                            });
+                        }
+                        
+                        if (layer) {
+                            // Stocker les données
+                            layer._obstacleId = id;
+                            layer._obstacleData = obs;
+                            
+                            // Ajouter le texte si présent
+                            if (obs.text && obs.text.trim()) {
+                                let center;
+                                if (obs.type === 'circle') {
+                                    center = [obs.center.lat, obs.center.lng];
+                                } else if (obs.type === 'rectangle') {
+                                    center = [(obs.bounds.south + obs.bounds.north) / 2, 
+                                             (obs.bounds.west + obs.bounds.east) / 2];
+                                } else if (obs.type === 'polygon' && obs.points.length > 0) {
+                                    const sumLat = obs.points.reduce((sum, p) => sum + p.lat, 0);
+                                    const sumLng = obs.points.reduce((sum, p) => sum + p.lng, 0);
+                                    center = [sumLat / obs.points.length, sumLng / obs.points.length];
+                                } else if (obs.type === 'line' && obs.points.length >= 2) {
+                                    const midIndex = Math.floor(obs.points.length / 2);
+                                    center = [obs.points[midIndex].lat, obs.points[midIndex].lng];
+                                }
+                                
+                                if (center) {
+                                    const textTooltip = L.tooltip({
+                                        permanent: true,
+                                        direction: 'center',
+                                        className: 'obstacle-text-tooltip',
+                                        offset: [0, 0],
+                                        interactive: false
+                                    }).setContent(`<div style="
+                                        background: rgba(0,0,0,0.9);
+                                        color: ${obs.color || '#ff4444'};
+                                        padding: 8px 15px;
+                                        border-radius: 8px;
+                                        border: 2px solid ${obs.color || '#ff4444'};
+                                        font-weight: bold;
+                                        font-size: 18px;
+                                        text-align: center;
+                                        white-space: nowrap;
+                                        pointer-events: none;
+                                        ">${obs.text}</div>`);
+                                    
+                                    layer.bindTooltip(textTooltip);
+                                }
+                            }
+                            
+                            // Ajouter hover effect
+                            layer.on('mouseover', function() {
+                                this.setStyle({
+                                    fillOpacity: 0.7,
+                                    weight: 6
+                                });
+                            });
+                            
+                            layer.on('mouseout', function() {
+                                this.setStyle({
+                                    fillOpacity: 0.5,
+                                    weight: 4
+                                });
+                            });
+                            
+                            // Clic direct pour supprimer
+                            layer.on('click', (e) => {
+                                L.DomEvent.stopPropagation(e);
+                                this.showDeletePopup(id, obs, e.latlng);
+                            });
+                            
+                            this.groups.obstacles.addLayer(layer);
+                        }
+                    } catch (error) {
+                        console.error('Erreur création obstacle edit:', error);
+                    }
+                });
+            },
+            
+            showDeletePopup(id, obs, latlng) {
+                console.log('Affichage popup suppression pour:', id);
+                
+                const popupContent = `
+                    <div style="text-align: center; min-width: 200px; padding: 10px;">
+                        <h3 style="margin: 0 0 10px 0; color: #ff4444;">Supprimer cet obstacle ?</h3>
+                        <div style="margin: 10px 0; font-size: 14px;">
+                            <p style="margin: 5px 0;"><b>Type:</b> ${obs.type}</p>
+                            ${obs.text ? `<p style="margin: 5px 0;"><b>Texte:</b> "${obs.text}"</p>` : ''}
+                            <p style="margin: 5px 0; color: #888; font-size: 12px;">Créé par: ${obs.createdBy || 'Inconnu'}</p>
+                        </div>
+                        <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: center;">
+                            <button id="deleteObstacleBtn" style="
+                                background: #ff4444; 
+                                color: white; 
+                                border: none; 
+                                padding: 10px 20px; 
+                                border-radius: 5px; 
+                                cursor: pointer;
+                                font-weight: bold;
+                            ">🗑️ Supprimer</button>
+                            <button id="cancelDeleteBtn" style="
+                                background: #666; 
+                                color: white; 
+                                border: none; 
+                                padding: 10px 20px; 
+                                border-radius: 5px; 
+                                cursor: pointer;
+                                font-weight: bold;
+                            ">Annuler</button>
+                        </div>
+                    </div>
+                `;
+                
+                const popup = L.popup({
+                    closeButton: true,
+                    autoClose: false,
+                    closeOnClick: false
+                })
+                .setLatLng(latlng)
+                .setContent(popupContent)
+                .openOn(this.map);
+                
+                // Attacher les événements aux boutons après l'ouverture du popup
+                setTimeout(() => {
+                    const deleteBtn = document.getElementById('deleteObstacleBtn');
+                    const cancelBtn = document.getElementById('cancelDeleteBtn');
+                    
+                    if (deleteBtn) {
+                        deleteBtn.onclick = () => {
+                            console.log('Suppression confirmée pour:', id);
+                            this.removeObstacle(id);
+                            this.map.closePopup();
+                        };
+                    }
+                    
+                    if (cancelBtn) {
+                        cancelBtn.onclick = () => {
+                            this.map.closePopup();
+                        };
+                    }
+                }, 100);
             },
 
             onMapClick(e) {
-                console.log('Map click:', e.latlng, 'Enemy mode:', this.state.enemyMode);
+                console.log('Map click:', e.latlng, 'Enemy mode:', this.state.enemyMode, 'Edit mode:', this.state.editMode);
                 
                 if (this.state.enemyMode) {
                     this.addEnemy(e.latlng);
                     this.toggleEnemyMode();
-                } else if (this.state.drawMode) {
-                    if (!this.state.isDrawing) {
-                        this.startDrawing(e.latlng);
-                    } else {
-                        this.finishDrawing(e.latlng);
+                } else if (this.state.drawMode && !this.state.editMode) {
+                    // Ne dessiner que si on est en mode dessin ET pas en mode édition
+                    if (this.state.drawTool === 'rectangle' || this.state.drawTool === 'circle') {
+                        if (!this.state.isDrawing) {
+                            this.startDrawing(e.latlng);
+                        } else {
+                            this.finishDrawing(e.latlng);
+                        }
+                    } else if (this.state.drawTool === 'polygon') {
+                        this.addPolygonPoint(e.latlng);
+                    } else if (this.state.drawTool === 'line') {
+                        this.addLinePoint(e.latlng);
                     }
                 }
+                // En mode édition, ne rien faire sur la carte (seulement sur les obstacles)
             },
 
             onMapMove(e) {
                 if (this.state.drawMode && this.state.isDrawing) {
                     this.updatePreview(e.latlng);
+                }
+            },
+            
+            onMapRightClick(e) {
+                if (this.state.drawMode) {
+                    e.originalEvent.preventDefault();
+                    
+                    if (this.state.drawTool === 'polygon' && this.state.polygonPoints.length >= 3) {
+                        this.finishPolygon();
+                    } else if (this.state.drawTool === 'line' && this.state.linePoints.length >= 2) {
+                        this.finishLine();
+                    }
+                }
+            },
+            
+            onMapDoubleClick(e) {
+                if (this.state.drawMode) {
+                    e.originalEvent.preventDefault();
+                    e.originalEvent.stopPropagation();
+                    
+                    if (this.state.drawTool === 'polygon' && this.state.polygonPoints.length >= 3) {
+                        this.finishPolygon();
+                    } else if (this.state.drawTool === 'line' && this.state.linePoints.length >= 2) {
+                        this.finishLine();
+                    }
                 }
             },
 
@@ -996,10 +1498,10 @@
                     iconAnchor: [15, 15]
                 });
 
-                // Créer le marqueur avec position FIXE (pas de draggable)
+                // Créer le marqueur dans le pane spécial pour être au-dessus
                 const marker = L.marker([data.lat, data.lng], {
                     icon,
-                    zIndexOffset: 5000,
+                    pane: 'enemyPane',  // Pane personnalisé au-dessus des tooltips
                     draggable: false,
                     autoPan: false
                 }).addTo(this.map);
@@ -1117,47 +1619,317 @@
                     this.state.preview = null;
                 }
 
-                const id = 'obs_' + Date.now();
-                let data = {
-                    type: this.state.drawTool,
-                    color: this.state.drawColor,
-                    createdBy: this.state.playerName,
-                    timestamp: Date.now()
-                };
+                // Vérifier qu'il n'y a pas déjà un popup ouvert
+                if (document.querySelector('.obstacle-text-popup')) {
+                    return;
+                }
 
-                if (this.state.drawTool === 'rectangle') {
-                    const bounds = L.latLngBounds(this.state.drawStart, latlng);
-                    data.bounds = {
-                        north: bounds.getNorth(),
-                        south: bounds.getSouth(),
-                        east: bounds.getEast(),
-                        west: bounds.getWest()
+                // Demander le texte à l'utilisateur
+                this.showTextPrompt((text) => {
+                    const id = 'obs_' + Date.now();
+                    let data = {
+                        type: this.state.drawTool,
+                        color: this.state.drawColor,
+                        createdBy: this.state.playerName,
+                        timestamp: Date.now(),
+                        text: text || ''
                     };
-                } else {
-                    data.center = {lat: this.state.drawStart.lat, lng: this.state.drawStart.lng};
-                    data.radius = this.map.distance(this.state.drawStart, latlng);
-                }
 
-                // Sauvegarder si connecté
-                if (this.state.isConnected) {
-                    const obsRef = ref(this.firebase.db, `obstacles/${this.state.teamCode}/${id}`);
-                    set(obsRef, data);
-                }
+                    if (this.state.drawTool === 'rectangle') {
+                        const bounds = L.latLngBounds(this.state.drawStart, latlng);
+                        data.bounds = {
+                            north: bounds.getNorth(),
+                            south: bounds.getSouth(),
+                            east: bounds.getEast(),
+                            west: bounds.getWest()
+                        };
+                    } else {
+                        data.center = {lat: this.state.drawStart.lat, lng: this.state.drawStart.lng};
+                        data.radius = this.map.distance(this.state.drawStart, latlng);
+                    }
 
-                this.state.isDrawing = false;
-                this.state.drawStart = null;
+                    // Sauvegarder si connecté
+                    if (this.state.isConnected && this.firebase.db) {
+                        const obsRef = ref(this.firebase.db, `obstacles/${this.state.teamCode}/${id}`);
+                        set(obsRef, data);
+                    } else {
+                        // Ajouter localement si pas connecté
+                        console.log('Mode hors ligne - ajout local de l\'obstacle');
+                        // Forcer la mise à jour locale
+                        setTimeout(() => {
+                            onValue(this.firebase.refs.obstacles, (snap) => {
+                                const currentData = snap.val() || {};
+                                currentData[id] = data;
+                                this.updateObstacles(currentData);
+                            }, { onlyOnce: true });
+                        }, 100);
+                    }
+
+                    this.state.isDrawing = false;
+                    this.state.drawStart = null;
+                    this.notify('Obstacle créé');
+                });
             },
 
             setDrawTool(tool) {
+                // Nettoyer l'outil précédent
+                this.clearTempMarkers();
+                this.state.polygonPoints = [];
+                this.state.linePoints = [];
+                if (this.state.preview) {
+                    this.map.removeLayer(this.state.preview);
+                    this.state.preview = null;
+                }
+                this.state.isDrawing = false;
+                this.state.drawStart = null;
+                
+                // Définir le nouvel outil
                 this.state.drawTool = tool;
                 document.querySelectorAll('#drawPanel .btn').forEach(b => b.classList.remove('active'));
                 event.target.classList.add('active');
+                
+                // Instructions selon l'outil
+                if (tool === 'polygon') {
+                    this.notify('Cliquez pour dessiner un polygone');
+                } else if (tool === 'line') {
+                    this.notify('Cliquez pour dessiner une ligne');
+                } else if (tool === 'rectangle') {
+                    this.notify('Cliquez et maintenez pour dessiner');
+                } else if (tool === 'circle') {
+                    this.notify('Cliquez au centre puis définissez le rayon');
+                }
             },
 
             setDrawColor(color, e) {
                 this.state.drawColor = color;
                 document.querySelectorAll('.color').forEach(c => c.classList.remove('active'));
                 e.target.classList.add('active');
+            },
+            
+            // Nouvelles méthodes pour les formes personnalisées
+            addPolygonPoint(latlng) {
+                this.state.polygonPoints.push(latlng);
+                
+                // Ajouter un marqueur temporaire
+                const marker = L.circleMarker(latlng, {
+                    radius: 5,
+                    color: this.state.drawColor,
+                    fillColor: this.state.drawColor,
+                    fillOpacity: 0.8
+                });
+                marker.addTo(this.map);
+                this.state.tempMarkers.push(marker);
+                
+                // Mettre à jour l'aperçu
+                if (this.state.preview) {
+                    this.map.removeLayer(this.state.preview);
+                }
+                
+                if (this.state.polygonPoints.length >= 2) {
+                    this.state.preview = L.polyline(this.state.polygonPoints, {
+                        color: this.state.drawColor,
+                        dashArray: '5, 5'
+                    });
+                    this.state.preview.addTo(this.map);
+                }
+                
+                // Instructions
+                if (this.state.polygonPoints.length === 1) {
+                    this.notify('Continuez à cliquer pour ajouter des points');
+                } else if (this.state.polygonPoints.length >= 3) {
+                    this.notify('Clic droit ou double-clic pour terminer');
+                }
+            },
+            
+            addLinePoint(latlng) {
+                this.state.linePoints.push(latlng);
+                
+                // Ajouter un marqueur temporaire
+                const marker = L.circleMarker(latlng, {
+                    radius: 5,
+                    color: this.state.drawColor,
+                    fillColor: this.state.drawColor,
+                    fillOpacity: 0.8
+                });
+                marker.addTo(this.map);
+                this.state.tempMarkers.push(marker);
+                
+                // Mettre à jour l'aperçu
+                if (this.state.preview) {
+                    this.map.removeLayer(this.state.preview);
+                }
+                
+                if (this.state.linePoints.length >= 2) {
+                    this.state.preview = L.polyline(this.state.linePoints, {
+                        color: this.state.drawColor,
+                        weight: 4
+                    });
+                    this.state.preview.addTo(this.map);
+                }
+                
+                // Instructions
+                if (this.state.linePoints.length === 1) {
+                    this.notify('Cliquez pour ajouter le point suivant');
+                } else {
+                    this.notify('Clic droit ou double-clic pour terminer');
+                }
+            },
+            
+            clearTempMarkers() {
+                this.state.tempMarkers.forEach(marker => {
+                    this.map.removeLayer(marker);
+                });
+                this.state.tempMarkers = [];
+            },
+            
+            finishPolygon() {
+                if (this.state.polygonPoints.length < 3) {
+                    this.notify('Un polygone nécessite au moins 3 points');
+                    return;
+                }
+                
+                // Vérifier qu'il n'y a pas déjà un popup ouvert
+                if (document.querySelector('.obstacle-text-popup')) {
+                    return;
+                }
+                
+                this.showTextPrompt((text) => {
+                    const id = 'obs_' + Date.now();
+                    const data = {
+                        type: 'polygon',
+                        color: this.state.drawColor,
+                        createdBy: this.state.playerName,
+                        timestamp: Date.now(),
+                        points: this.state.polygonPoints.map(p => ({lat: p.lat, lng: p.lng})),
+                        text: text || ''
+                    };
+                    
+                    if (this.state.isConnected && this.firebase.db) {
+                        const obsRef = ref(this.firebase.db, `obstacles/${this.state.teamCode}/${id}`);
+                        set(obsRef, data);
+                    } else {
+                        // Ajouter localement si pas connecté
+                        console.log('Mode hors ligne - ajout local du polygone');
+                    }
+                    
+                    // Nettoyer
+                    this.clearTempMarkers();
+                    if (this.state.preview) {
+                        this.map.removeLayer(this.state.preview);
+                        this.state.preview = null;
+                    }
+                    this.state.polygonPoints = [];
+                    this.notify('Polygone créé');
+                });
+            },
+            
+            finishLine() {
+                if (this.state.linePoints.length < 2) {
+                    this.notify('Une ligne nécessite au moins 2 points');
+                    return;
+                }
+                
+                // Vérifier qu'il n'y a pas déjà un popup ouvert
+                if (document.querySelector('.obstacle-text-popup')) {
+                    return;
+                }
+                
+                this.showTextPrompt((text) => {
+                    const id = 'obs_' + Date.now();
+                    const data = {
+                        type: 'line',
+                        color: this.state.drawColor,
+                        createdBy: this.state.playerName,
+                        timestamp: Date.now(),
+                        points: this.state.linePoints.map(p => ({lat: p.lat, lng: p.lng})),
+                        text: text || ''
+                    };
+                    
+                    if (this.state.isConnected && this.firebase.db) {
+                        const obsRef = ref(this.firebase.db, `obstacles/${this.state.teamCode}/${id}`);
+                        set(obsRef, data);
+                    } else {
+                        // Ajouter localement si pas connecté
+                        console.log('Mode hors ligne - ajout local de la ligne');
+                    }
+                    
+                    // Nettoyer
+                    this.clearTempMarkers();
+                    if (this.state.preview) {
+                        this.map.removeLayer(this.state.preview);
+                        this.state.preview = null;
+                    }
+                    this.state.linePoints = [];
+                    this.notify('Ligne créée');
+                });
+            },
+            
+            showTextPrompt(callback) {
+                // Créer la popup
+                const popup = document.createElement('div');
+                popup.className = 'obstacle-text-popup';
+                popup.innerHTML = `
+                    <h3>Ajouter un texte (optionnel)</h3>
+                    <input type="text" id="obstacleText" placeholder="Ex: Zone de tir, Mur..." maxlength="20">
+                    <div>
+                        <button id="textOkBtn">OK</button>
+                        <button id="textCancelBtn" class="cancel">Annuler</button>
+                    </div>
+                `;
+                document.body.appendChild(popup);
+                
+                // Stocker le callback
+                this._textCallback = callback;
+                
+                // Ajouter les événements aux boutons
+                document.getElementById('textOkBtn').addEventListener('click', () => {
+                    this.submitText();
+                });
+                
+                document.getElementById('textCancelBtn').addEventListener('click', () => {
+                    this.submitText(true);
+                });
+                
+                // Focus sur l'input
+                setTimeout(() => {
+                    const input = document.getElementById('obstacleText');
+                    if (input) input.focus();
+                }, 100);
+                
+                // Gérer Enter pour valider
+                document.getElementById('obstacleText').addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') {
+                        this.submitText();
+                    }
+                });
+                
+                // Gérer Escape pour annuler
+                document.addEventListener('keydown', this._escapeHandler = (e) => {
+                    if (e.key === 'Escape') {
+                        this.submitText(true);
+                    }
+                });
+            },
+            
+            submitText(cancel = false) {
+                const popup = document.querySelector('.obstacle-text-popup');
+                const textInput = document.getElementById('obstacleText');
+                const text = cancel ? '' : (textInput ? textInput.value.trim() : '');
+                
+                // Retirer le handler Escape
+                if (this._escapeHandler) {
+                    document.removeEventListener('keydown', this._escapeHandler);
+                    this._escapeHandler = null;
+                }
+                
+                if (popup) {
+                    popup.remove();
+                }
+                
+                if (this._textCallback) {
+                    this._textCallback(text);
+                    this._textCallback = null;
+                }
             },
 
             showQRCode() {
@@ -1414,7 +2186,7 @@
             App.addEnemy(testPos);
         };
         
-        // IMPORTANT: Exposer la fonction removeObstacle pour les popups
+        // IMPORTANT: Exposer les fonctions pour les popups
         window.removeObstacle = function(id) {
             App.removeObstacle(id);
         };
@@ -1516,6 +2288,49 @@
                     console.log('   Pour forcer la mise à jour, tapez: App.updateEnemies(' + JSON.stringify(data) + ')');
                 }, { onlyOnce: true });
             });
+        };
+        
+        // Debug pour les obstacles
+        window.debugObstacles = function() {
+            console.log('=== DIAGNOSTIC OBSTACLES ===');
+            
+            if (!App.groups.obstacles) {
+                console.error('❌ Groupe obstacles non initialisé !');
+                return;
+            }
+            
+            console.log('1. Analyse du groupe obstacles:');
+            let count = 0;
+            let withId = 0;
+            let withData = 0;
+            let paths = 0;
+            
+            App.groups.obstacles.eachLayer(layer => {
+                count++;
+                if (layer._obstacleId) withId++;
+                if (layer._obstacleData) withData++;
+                if (layer instanceof L.Path) paths++;
+                
+                console.log(`   Layer ${count}:`, {
+                    type: layer.constructor.name,
+                    hasId: !!layer._obstacleId,
+                    id: layer._obstacleId,
+                    hasData: !!layer._obstacleData,
+                    data: layer._obstacleData,
+                    interactive: layer.options?.interactive,
+                    isPath: layer instanceof L.Path
+                });
+            });
+            
+            console.log('2. Résumé:');
+            console.log(`   - Total layers: ${count}`);
+            console.log(`   - Avec ID: ${withId}`);
+            console.log(`   - Avec Data: ${withData}`);
+            console.log(`   - Paths (formes): ${paths}`);
+            console.log(`   - Mode édition actif: ${App.state.editMode}`);
+            
+            console.log('3. Pour activer le mode édition:');
+            console.log('   App.toggleEditMode()');
         };
         
         // Forcer une synchronisation manuelle
