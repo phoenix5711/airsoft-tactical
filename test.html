@@ -776,7 +776,7 @@
                                 color: obs.color || '#ff4444',
                                 weight: 3,
                                 fillOpacity: 0.3,
-                                interactive: !this.state.enemyMode
+                                interactive: false  // NON interactif par défaut
                             });
                         } else if (obs.type === 'circle' && obs.center && obs.radius) {
                             console.log('Création cercle:', id);
@@ -785,7 +785,7 @@
                                 color: obs.color || '#ff4444',
                                 weight: 3,
                                 fillOpacity: 0.3,
-                                interactive: !this.state.enemyMode
+                                interactive: false  // NON interactif par défaut
                             });
                         } else if (obs.type === 'polygon' && obs.points) {
                             console.log('Création polygone:', id);
@@ -794,7 +794,7 @@
                                 color: obs.color || '#ff4444',
                                 weight: 3,
                                 fillOpacity: 0.3,
-                                interactive: !this.state.enemyMode
+                                interactive: false  // NON interactif par défaut
                             });
                         } else if (obs.type === 'line' && obs.points) {
                             console.log('Création ligne:', id);
@@ -802,7 +802,7 @@
                             layer = L.polyline(latlngs, {
                                 color: obs.color || '#ff4444',
                                 weight: 4,
-                                interactive: !this.state.enemyMode
+                                interactive: false  // NON interactif par défaut
                             });
                         }
 
@@ -898,27 +898,6 @@
                                     
                                     this.groups.obstacles.addLayer(textMarker);
                                 }
-                            }
-                            
-                            // Ajouter popup pour supprimer (si pas en mode ennemi)
-                            if (!this.state.enemyMode) {
-                                layer.bindPopup(`
-                                    <div style="text-align: center;">
-                                        <b>Obstacle ${obs.type}</b><br>
-                                        ${obs.text ? `Texte: ${obs.text}<br>` : ''}
-                                        Par: ${obs.createdBy || 'Inconnu'}<br>
-                                        <button onclick="App.removeObstacle('${id}')" style="
-                                            background: #ff4444; 
-                                            color: white; 
-                                            border: none; 
-                                            padding: 5px 10px; 
-                                            border-radius: 3px; 
-                                            cursor: pointer;
-                                            margin-top: 5px;
-                                            font-weight: bold;
-                                        ">Supprimer</button>
-                                    </div>
-                                `);
                             }
                             
                             this.groups.obstacles.addLayer(layer);
@@ -1042,28 +1021,10 @@
                     btn.classList.add('active');
                     this.map.getContainer().style.cursor = 'crosshair';
                     
-                    // IMPORTANT: Désactiver temporairement l'interactivité des obstacles
-                    if (this.groups.obstacles) {
-                        this.groups.obstacles.eachLayer(layer => {
-                            layer._wasInteractive = layer.options.interactive;
-                            layer.setStyle({ interactive: false });
-                            layer.off('click');
-                        });
-                    }
-                    
                     this.notify('🎯 Cliquez pour marquer un ennemi');
                 } else {
                     btn.classList.remove('active');
                     this.map.getContainer().style.cursor = '';
-                    
-                    // Réactiver l'interactivité des obstacles
-                    if (this.groups.obstacles) {
-                        this.groups.obstacles.eachLayer(layer => {
-                            if (layer._wasInteractive !== false) {
-                                layer.setStyle({ interactive: true });
-                            }
-                        });
-                    }
                 }
             },
 
@@ -1077,11 +1038,53 @@
                     btn.classList.add('active');
                     panel.classList.add('show');
                     this.map.getContainer().style.cursor = 'crosshair';
-                    this.notify('✏️ Cliquez pour dessiner');
+                    
+                    // ACTIVER l'interactivité des obstacles en mode dessin
+                    if (this.groups.obstacles) {
+                        this.groups.obstacles.eachLayer(layer => {
+                            if (layer._obstacleId) {  // Seulement les formes, pas les textes
+                                layer.setStyle({ interactive: true });
+                                
+                                // Recréer le popup si nécessaire
+                                if (layer._obstacleData) {
+                                    const obs = layer._obstacleData;
+                                    layer.bindPopup(`
+                                        <div style="text-align: center;">
+                                            <b>Obstacle ${obs.type}</b><br>
+                                            ${obs.text ? `Texte: ${obs.text}<br>` : ''}
+                                            Par: ${obs.createdBy || 'Inconnu'}<br>
+                                            <button onclick="App.removeObstacle('${layer._obstacleId}')" style="
+                                                background: #ff4444; 
+                                                color: white; 
+                                                border: none; 
+                                                padding: 5px 10px; 
+                                                border-radius: 3px; 
+                                                cursor: pointer;
+                                                margin-top: 5px;
+                                                font-weight: bold;
+                                            ">Supprimer</button>
+                                        </div>
+                                    `);
+                                }
+                            }
+                        });
+                    }
+                    
+                    this.notify('✏️ Mode dessin - Obstacles modifiables');
                 } else {
                     btn.classList.remove('active');
                     panel.classList.remove('show');
                     this.map.getContainer().style.cursor = '';
+                    
+                    // DÉSACTIVER l'interactivité des obstacles
+                    if (this.groups.obstacles) {
+                        this.groups.obstacles.eachLayer(layer => {
+                            if (layer._obstacleId) {
+                                layer.setStyle({ interactive: false });
+                                layer.unbindPopup();
+                            }
+                        });
+                    }
                     
                     // Nettoyer les points temporaires
                     this.clearTempMarkers();
