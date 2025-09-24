@@ -301,11 +301,21 @@
             border: none !important;
             box-shadow: none !important;
             padding: 0 !important;
+            z-index: 500 !important;  /* Sous les ennemis */
         }
         
         .obstacle-text-tooltip div {
             text-shadow: 2px 2px 4px rgba(0,0,0,1);
             box-shadow: 0 0 15px rgba(0,0,0,0.8);
+        }
+        
+        /* S'assurer que les marqueurs ennemis sont toujours au-dessus */
+        .leaflet-marker-icon {
+            z-index: 1000 !important;
+        }
+        
+        .leaflet-tooltip {
+            z-index: 500 !important;
         }
     </style>
 </head>
@@ -349,6 +359,7 @@
             <button class="btn" onclick="App.recalibrateGPS()">🔄</button>
             <button class="btn" id="enemyBtn" onclick="App.toggleEnemyMode()">🎯</button>
             <button class="btn" id="drawBtn" onclick="App.toggleDrawMode()">✏️</button>
+            <button class="btn" id="editBtn" onclick="App.toggleEditMode()">🗑️</button>
             <button class="btn" onclick="App.showQRCode()">📲</button>
         </div>
 
@@ -414,6 +425,7 @@
                 isConnected: false,
                 enemyMode: false,
                 drawMode: false,
+                editMode: false,        // Mode édition pour supprimer
                 drawTool: 'rectangle',
                 drawColor: '#ff4444',
                 isDrawing: false,
@@ -879,7 +891,8 @@
                                         permanent: true,
                                         direction: 'center',
                                         className: 'obstacle-text-tooltip',
-                                        offset: [0, 0]
+                                        offset: [0, 0],
+                                        interactive: false  // Non interactif pour ne pas bloquer les clics
                                     }).setContent(`<div style="
                                         background: rgba(0,0,0,0.9);
                                         color: ${textColor};
@@ -890,6 +903,7 @@
                                         font-size: 18px;
                                         text-align: center;
                                         white-space: nowrap;
+                                        pointer-events: none;
                                         ">${textContent}</div>`);
                                     
                                     // Attacher le tooltip à la forme elle-même
@@ -1016,10 +1030,12 @@
                 const btn = document.getElementById('enemyBtn');
                 
                 if (this.state.enemyMode) {
+                    // Désactiver les autres modes
                     if (this.state.drawMode) this.toggleDrawMode();
+                    if (this.state.editMode) this.toggleEditMode();
+                    
                     btn.classList.add('active');
                     this.map.getContainer().style.cursor = 'crosshair';
-                    
                     this.notify('🎯 Cliquez pour marquer un ennemi');
                 } else {
                     btn.classList.remove('active');
@@ -1033,29 +1049,56 @@
                 const panel = document.getElementById('drawPanel');
                 
                 if (this.state.drawMode) {
+                    // Désactiver les autres modes
                     if (this.state.enemyMode) this.toggleEnemyMode();
+                    if (this.state.editMode) this.toggleEditMode();
+                    
                     btn.classList.add('active');
                     panel.classList.add('show');
                     this.map.getContainer().style.cursor = 'crosshair';
+                    this.notify('✏️ Mode dessin - Cliquez pour dessiner');
+                } else {
+                    btn.classList.remove('active');
+                    panel.classList.remove('show');
+                    this.map.getContainer().style.cursor = '';
                     
-                    // ACTIVER l'interactivité des obstacles en mode dessin
+                    // Nettoyer les points temporaires
+                    this.clearTempMarkers();
+                    this.state.polygonPoints = [];
+                    this.state.linePoints = [];
+                    if (this.state.preview) {
+                        this.map.removeLayer(this.state.preview);
+                        this.state.preview = null;
+                    }
+                }
+            },
+            
+            toggleEditMode() {
+                this.state.editMode = !this.state.editMode;
+                const btn = document.getElementById('editBtn');
+                
+                if (this.state.editMode) {
+                    // Désactiver les autres modes
+                    if (this.state.enemyMode) this.toggleEnemyMode();
+                    if (this.state.drawMode) this.toggleDrawMode();
+                    
+                    btn.classList.add('active');
+                    this.map.getContainer().style.cursor = 'pointer';
+                    
+                    // ACTIVER l'interactivité des obstacles en mode édition
                     if (this.groups.obstacles) {
                         this.groups.obstacles.eachLayer(layer => {
                             if (layer._obstacleId && layer._obstacleData && typeof layer.setStyle === 'function') {
-                                // Activer l'interactivité et les événements de souris
+                                // Activer l'interactivité
                                 layer.options.interactive = true;
                                 layer.options.bubblingMouseEvents = true;
                                 
-                                // Appliquer le nouveau style
-                                const currentStyle = {
-                                    color: layer.options.color,
-                                    weight: layer.options.weight,
-                                    fillOpacity: layer.options.fillOpacity
-                                };
-                                layer.setStyle(Object.assign({}, currentStyle, {
+                                // Appliquer le nouveau style avec surbrillance
+                                layer.setStyle({
                                     interactive: true,
-                                    bubblingMouseEvents: true
-                                }));
+                                    bubblingMouseEvents: true,
+                                    fillOpacity: 0.5  // Plus visible en mode édition
+                                });
                                 
                                 // Ajouter le popup de suppression
                                 const obs = layer._obstacleData;
@@ -1077,27 +1120,15 @@
                                     </div>
                                 `;
                                 
-                                // S'assurer que le popup fonctionne
                                 layer.unbindPopup();
-                                layer.bindPopup(popupContent, {
-                                    closeButton: false,
-                                    autoClose: false
-                                });
-                                
-                                // Ajouter un handler de clic explicite
-                                layer.on('click', function(e) {
-                                    if (App.state.drawMode) {
-                                        e.target.openPopup();
-                                    }
-                                });
+                                layer.bindPopup(popupContent);
                             }
                         });
                     }
                     
-                    this.notify('✏️ Mode dessin - Cliquez sur les obstacles pour les supprimer');
+                    this.notify('🗑️ Mode édition - Cliquez sur un obstacle pour le supprimer');
                 } else {
                     btn.classList.remove('active');
-                    panel.classList.remove('show');
                     this.map.getContainer().style.cursor = '';
                     
                     // DÉSACTIVER l'interactivité des obstacles
@@ -1108,44 +1139,31 @@
                                 layer.options.interactive = false;
                                 layer.options.bubblingMouseEvents = false;
                                 
-                                // Appliquer le nouveau style
-                                const currentStyle = {
-                                    color: layer.options.color,
-                                    weight: layer.options.weight,
-                                    fillOpacity: layer.options.fillOpacity
-                                };
-                                layer.setStyle(Object.assign({}, currentStyle, {
+                                // Remettre le style normal
+                                layer.setStyle({
                                     interactive: false,
-                                    bubblingMouseEvents: false
-                                }));
+                                    bubblingMouseEvents: false,
+                                    fillOpacity: 0.3  // Opacité normale
+                                });
                                 
-                                // Retirer les événements et le popup
-                                layer.off('click');
+                                // Retirer le popup
                                 if (layer.unbindPopup) {
                                     layer.unbindPopup();
                                 }
                             }
                         });
                     }
-                    
-                    // Nettoyer les points temporaires
-                    this.clearTempMarkers();
-                    this.state.polygonPoints = [];
-                    this.state.linePoints = [];
-                    if (this.state.preview) {
-                        this.map.removeLayer(this.state.preview);
-                        this.state.preview = null;
-                    }
                 }
             },
 
             onMapClick(e) {
-                console.log('Map click:', e.latlng, 'Enemy mode:', this.state.enemyMode);
+                console.log('Map click:', e.latlng, 'Enemy mode:', this.state.enemyMode, 'Edit mode:', this.state.editMode);
                 
                 if (this.state.enemyMode) {
                     this.addEnemy(e.latlng);
                     this.toggleEnemyMode();
-                } else if (this.state.drawMode) {
+                } else if (this.state.drawMode && !this.state.editMode) {
+                    // Ne dessiner que si on est en mode dessin ET pas en mode édition
                     if (this.state.drawTool === 'rectangle' || this.state.drawTool === 'circle') {
                         if (!this.state.isDrawing) {
                             this.startDrawing(e.latlng);
@@ -1158,6 +1176,7 @@
                         this.addLinePoint(e.latlng);
                     }
                 }
+                // En mode édition, ne rien faire sur la carte (seulement sur les obstacles)
             },
 
             onMapMove(e) {
@@ -1302,7 +1321,7 @@
                 // Créer le marqueur avec position FIXE (pas de draggable)
                 const marker = L.marker([data.lat, data.lng], {
                     icon,
-                    zIndexOffset: 5000,
+                    zIndexOffset: 20000,  // Très élevé pour être au-dessus de tout
                     draggable: false,
                     autoPan: false
                 }).addTo(this.map);
