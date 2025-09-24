@@ -295,6 +295,18 @@
         .obstacle-label-div > div > div {
             display: inline-block !important;
         }
+        
+        .obstacle-text-tooltip {
+            background: none !important;
+            border: none !important;
+            box-shadow: none !important;
+            padding: 0 !important;
+        }
+        
+        .obstacle-text-tooltip div {
+            text-shadow: 2px 2px 4px rgba(0,0,0,1);
+            box-shadow: 0 0 15px rgba(0,0,0,0.8);
+        }
     </style>
 </head>
 <body>
@@ -776,7 +788,8 @@
                                 color: obs.color || '#ff4444',
                                 weight: 3,
                                 fillOpacity: 0.3,
-                                interactive: false  // NON interactif par défaut
+                                interactive: false,
+                                bubblingMouseEvents: false  // Empêche la propagation des clics
                             });
                         } else if (obs.type === 'circle' && obs.center && obs.radius) {
                             console.log('Création cercle:', id);
@@ -785,7 +798,8 @@
                                 color: obs.color || '#ff4444',
                                 weight: 3,
                                 fillOpacity: 0.3,
-                                interactive: false  // NON interactif par défaut
+                                interactive: false,
+                                bubblingMouseEvents: false
                             });
                         } else if (obs.type === 'polygon' && obs.points) {
                             console.log('Création polygone:', id);
@@ -794,7 +808,8 @@
                                 color: obs.color || '#ff4444',
                                 weight: 3,
                                 fillOpacity: 0.3,
-                                interactive: false  // NON interactif par défaut
+                                interactive: false,
+                                bubblingMouseEvents: false
                             });
                         } else if (obs.type === 'line' && obs.points) {
                             console.log('Création ligne:', id);
@@ -802,7 +817,8 @@
                             layer = L.polyline(latlngs, {
                                 color: obs.color || '#ff4444',
                                 weight: 4,
-                                interactive: false  // NON interactif par défaut
+                                interactive: false,
+                                bubblingMouseEvents: false
                             });
                         }
 
@@ -855,48 +871,31 @@
                                 }
                                 
                                 if (center) {
-                                    // Approche simplifiée pour éviter les problèmes de rendu
                                     const textContent = obs.text;
                                     const textColor = obs.color || '#ff4444';
                                     
-                                    // HTML avec style inline complet
-                                    const markerHtml = '<div style="' +
-                                        'position: relative;' +
-                                        'width: auto;' +
-                                        'height: auto;' +
-                                        '">' +
-                                        '<div style="' +
-                                        'display: inline-block;' +
-                                        'background: rgba(0,0,0,0.95);' +
-                                        'color: ' + textColor + ';' +
-                                        'padding: 15px 30px;' +
-                                        'border-radius: 15px;' +
-                                        'border: 5px solid ' + textColor + ';' +
-                                        'font-family: Arial, sans-serif;' +
-                                        'font-weight: 900;' +
-                                        'font-size: 36px;' +
-                                        'line-height: 1;' +
-                                        'text-align: center;' +
-                                        'text-shadow: 3px 3px 8px rgba(0,0,0,1);' +
-                                        'box-shadow: 0 0 30px rgba(0,0,0,1);' +
-                                        'white-space: nowrap;' +
-                                        'letter-spacing: 1px;' +
-                                        '">' + textContent + '</div>' +
-                                        '</div>';
+                                    // Utiliser un tooltip permanent au lieu d'un marqueur
+                                    const textTooltip = L.tooltip({
+                                        permanent: true,
+                                        direction: 'center',
+                                        className: 'obstacle-text-tooltip',
+                                        offset: [0, 0]
+                                    }).setContent(`<div style="
+                                        background: rgba(0,0,0,0.9);
+                                        color: ${textColor};
+                                        padding: 8px 15px;
+                                        border-radius: 8px;
+                                        border: 2px solid ${textColor};
+                                        font-weight: bold;
+                                        font-size: 18px;
+                                        text-align: center;
+                                        white-space: nowrap;
+                                        ">${textContent}</div>`);
                                     
-                                    const textIcon = L.divIcon({
-                                        html: markerHtml,
-                                        iconSize: null,
-                                        className: 'obstacle-label-div'
-                                    });
-                                    
-                                    const textMarker = L.marker(center, {
-                                        icon: textIcon,
-                                        interactive: false,
-                                        zIndexOffset: 10000
-                                    });
-                                    
-                                    this.groups.obstacles.addLayer(textMarker);
+                                    // Attacher le tooltip à la forme elle-même
+                                    if (layer) {
+                                        layer.bindTooltip(textTooltip);
+                                    }
                                 }
                             }
                             
@@ -1042,35 +1041,60 @@
                     // ACTIVER l'interactivité des obstacles en mode dessin
                     if (this.groups.obstacles) {
                         this.groups.obstacles.eachLayer(layer => {
-                            if (layer._obstacleId) {  // Seulement les formes, pas les textes
-                                layer.setStyle({ interactive: true });
+                            if (layer._obstacleId && layer._obstacleData && typeof layer.setStyle === 'function') {
+                                // Activer l'interactivité et les événements de souris
+                                layer.options.interactive = true;
+                                layer.options.bubblingMouseEvents = true;
                                 
-                                // Recréer le popup si nécessaire
-                                if (layer._obstacleData) {
-                                    const obs = layer._obstacleData;
-                                    layer.bindPopup(`
-                                        <div style="text-align: center;">
-                                            <b>Obstacle ${obs.type}</b><br>
-                                            ${obs.text ? `Texte: ${obs.text}<br>` : ''}
-                                            Par: ${obs.createdBy || 'Inconnu'}<br>
-                                            <button onclick="App.removeObstacle('${layer._obstacleId}')" style="
-                                                background: #ff4444; 
-                                                color: white; 
-                                                border: none; 
-                                                padding: 5px 10px; 
-                                                border-radius: 3px; 
-                                                cursor: pointer;
-                                                margin-top: 5px;
-                                                font-weight: bold;
-                                            ">Supprimer</button>
-                                        </div>
-                                    `);
-                                }
+                                // Appliquer le nouveau style
+                                const currentStyle = {
+                                    color: layer.options.color,
+                                    weight: layer.options.weight,
+                                    fillOpacity: layer.options.fillOpacity
+                                };
+                                layer.setStyle(Object.assign({}, currentStyle, {
+                                    interactive: true,
+                                    bubblingMouseEvents: true
+                                }));
+                                
+                                // Ajouter le popup de suppression
+                                const obs = layer._obstacleData;
+                                const popupContent = `
+                                    <div style="text-align: center;">
+                                        <b>Obstacle ${obs.type}</b><br>
+                                        ${obs.text ? `Texte: ${obs.text}<br>` : ''}
+                                        Par: ${obs.createdBy || 'Inconnu'}<br>
+                                        <button onclick="App.removeObstacle('${layer._obstacleId}')" style="
+                                            background: #ff4444; 
+                                            color: white; 
+                                            border: none; 
+                                            padding: 5px 10px; 
+                                            border-radius: 3px; 
+                                            cursor: pointer;
+                                            margin-top: 5px;
+                                            font-weight: bold;
+                                        ">Supprimer</button>
+                                    </div>
+                                `;
+                                
+                                // S'assurer que le popup fonctionne
+                                layer.unbindPopup();
+                                layer.bindPopup(popupContent, {
+                                    closeButton: false,
+                                    autoClose: false
+                                });
+                                
+                                // Ajouter un handler de clic explicite
+                                layer.on('click', function(e) {
+                                    if (App.state.drawMode) {
+                                        e.target.openPopup();
+                                    }
+                                });
                             }
                         });
                     }
                     
-                    this.notify('✏️ Mode dessin - Obstacles modifiables');
+                    this.notify('✏️ Mode dessin - Cliquez sur les obstacles pour les supprimer');
                 } else {
                     btn.classList.remove('active');
                     panel.classList.remove('show');
@@ -1079,9 +1103,27 @@
                     // DÉSACTIVER l'interactivité des obstacles
                     if (this.groups.obstacles) {
                         this.groups.obstacles.eachLayer(layer => {
-                            if (layer._obstacleId) {
-                                layer.setStyle({ interactive: false });
-                                layer.unbindPopup();
+                            if (layer._obstacleId && typeof layer.setStyle === 'function') {
+                                // Désactiver l'interactivité
+                                layer.options.interactive = false;
+                                layer.options.bubblingMouseEvents = false;
+                                
+                                // Appliquer le nouveau style
+                                const currentStyle = {
+                                    color: layer.options.color,
+                                    weight: layer.options.weight,
+                                    fillOpacity: layer.options.fillOpacity
+                                };
+                                layer.setStyle(Object.assign({}, currentStyle, {
+                                    interactive: false,
+                                    bubblingMouseEvents: false
+                                }));
+                                
+                                // Retirer les événements et le popup
+                                layer.off('click');
+                                if (layer.unbindPopup) {
+                                    layer.unbindPopup();
+                                }
                             }
                         });
                     }
