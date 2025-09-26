@@ -373,6 +373,7 @@
             <button class="btn" id="enemyBtn" onclick="App.toggleEnemyMode()">🎯</button>
             <button class="btn" id="drawBtn" onclick="App.toggleDrawMode()">✏️</button>
             <button class="btn" id="editBtn" onclick="App.toggleEditMode()">🗑️</button>
+            <button class="btn" id="sensorBtn" onclick="App.toggleSensorMode()">📡</button>
             <button class="btn" onclick="App.showQRCode()">📲</button>
         </div>
 
@@ -404,6 +405,14 @@
                 <a href="#" onclick="App.changeTeam()" style="color: #888; font-size: 11px; text-decoration: underline;">Changer d'équipe</a>
             </div>
         </div>
+    </div>
+
+    <div class="sensor-panel" id="sensorPanel">
+        <h3 style="color: #00ff00; margin: 0 0 10px 0; font-size: 14px;">📡 CAPTEURS</h3>
+        <div id="sensorList"></div>
+        <button class="btn" onclick="App.addNewSensor()" style="width: 100%; margin-top: 10px;">
+            ➕ Ajouter capteur
+        </button>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -439,6 +448,7 @@
                 enemyMode: false,
                 drawMode: false,
                 editMode: false,        // Mode édition pour supprimer
+                sensorMode: false,      // Mode capteurs
                 drawTool: 'rectangle',
                 drawColor: '#ff4444',
                 isDrawing: false,
@@ -447,7 +457,8 @@
                 deferredPrompt: null,  // Pour l'installation PWA
                 polygonPoints: [],     // Points du polygone en cours
                 linePoints: [],        // Points de la ligne en cours
-                tempMarkers: []        // Marqueurs temporaires pour les points
+                tempMarkers: [],       // Marqueurs temporaires pour les points
+                sensors: {}           // État des capteurs
             },
 
             // Configuration Firebase - REMPLACEZ PAR LA VÔTRE !
@@ -528,6 +539,17 @@
                 this.firebase.refs.team = ref(this.firebase.db, `teams/${team}`);
                 this.firebase.refs.obstacles = ref(this.firebase.db, `obstacles/${team}`);
                 this.firebase.refs.enemies = ref(this.firebase.db, `enemies/${team}`);
+                this.firebase.refs.sensors = ref(this.firebase.db, `sensors/${team}`);
+                
+                // Écoute des changements
+                onValue(this.firebase.refs.team, (snap) => this.updateTeammates(snap.val()));
+                
+                // Écoute des capteurs
+                onValue(this.firebase.refs.sensors, (snap) => {
+                    console.log('=== MISE À JOUR CAPTEURS ===');
+                    console.log('Données reçues:', snap.val());
+                    this.updateSensors(snap.val());
+                });
                 
                 // Écoute des changements
                 onValue(this.firebase.refs.team, (snap) => this.updateTeammates(snap.val()));
@@ -1272,68 +1294,235 @@
                 });
             },
             
-            showDeletePopup(id, obs, latlng) {
-                console.log('Affichage popup suppression pour:', id);
+            toggleSensorMode() {
+                this.state.sensorMode = !this.state.sensorMode;
+                const btn = document.getElementById('sensorBtn');
+                const panel = document.getElementById('sensorPanel');
                 
-                const popupContent = `
-                    <div style="text-align: center; min-width: 200px; padding: 10px;">
-                        <h3 style="margin: 0 0 10px 0; color: #ff4444;">Supprimer cet obstacle ?</h3>
-                        <div style="margin: 10px 0; font-size: 14px;">
-                            <p style="margin: 5px 0;"><b>Type:</b> ${obs.type}</p>
-                            ${obs.text ? `<p style="margin: 5px 0;"><b>Texte:</b> "${obs.text}"</p>` : ''}
-                            <p style="margin: 5px 0; color: #888; font-size: 12px;">Créé par: ${obs.createdBy || 'Inconnu'}</p>
-                        </div>
-                        <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: center;">
-                            <button id="deleteObstacleBtn" style="
-                                background: #ff4444; 
-                                color: white; 
-                                border: none; 
-                                padding: 10px 20px; 
-                                border-radius: 5px; 
-                                cursor: pointer;
-                                font-weight: bold;
-                            ">🗑️ Supprimer</button>
-                            <button id="cancelDeleteBtn" style="
-                                background: #666; 
-                                color: white; 
-                                border: none; 
-                                padding: 10px 20px; 
-                                border-radius: 5px; 
-                                cursor: pointer;
-                                font-weight: bold;
-                            ">Annuler</button>
+                if (this.state.sensorMode) {
+                    // Désactiver les autres modes
+                    if (this.state.enemyMode) this.toggleEnemyMode();
+                    if (this.state.drawMode) this.toggleDrawMode();
+                    if (this.state.editMode) this.toggleEditMode();
+                    
+                    btn.classList.add('active');
+                    panel.classList.add('show');
+                    this.map.getContainer().style.cursor = 'crosshair';
+                    
+                    this.notify('📡 Mode capteurs - Cliquez pour placer');
+                } else {
+                    btn.classList.remove('active');
+                    panel.classList.remove('show');
+                    this.map.getContainer().style.cursor = '';
+                }
+            },
+            
+            updateSensors(data) {
+                console.log('Mise à jour capteurs:', data);
+                
+                // Nettoyer les anciens marqueurs
+                Object.keys(this.state.sensors).forEach(id => {
+                    if (!data || !data[id]) {
+                        if (this.state.sensors[id].marker) {
+                            this.map.removeLayer(this.state.sensors[id].marker);
+                        }
+                        delete this.state.sensors[id];
+                    }
+                });
+                
+                if (!data) return;
+                
+                // Mettre à jour ou créer les marqueurs
+                Object.keys(data).forEach(id => {
+                    const sensor = data[id];
+                    
+                    // Créer ou mettre à jour le marqueur
+                    if (!this.state.sensors[id]) {
+                        this.state.sensors[id] = { data: sensor };
+                        this.createSensorMarker(id, sensor);
+                    } else {
+                        // Mettre à jour l'état
+                        this.state.sensors[id].data = sensor;
+                        this.updateSensorMarker(id, sensor);
+                    }
+                });
+                
+                // Mettre à jour la liste dans le panneau
+                this.updateSensorPanel();
+            },
+            
+            createSensorMarker(id, sensor) {
+                if (!sensor.position) return;
+                
+                const isTriggered = sensor.status === 'triggered' && 
+                                  Date.now() - sensor.timestamp < 30000; // 30 sec
+                
+                const icon = L.divIcon({
+                    className: 'sensor-marker-div',
+                    html: `<div class="sensor-marker ${isTriggered ? 'triggered' : ''}">
+                               📡
+                           </div>
+                           <div style="background: rgba(0,0,0,0.8); color: #00ff00; 
+                                       padding: 2px 6px; border-radius: 4px; 
+                                       font-size: 10px; margin-top: 2px;">
+                               ${sensor.name || id}
+                           </div>`,
+                    iconSize: [30, 40],
+                    iconAnchor: [15, 20]
+                });
+                
+                const marker = L.marker([sensor.position.lat, sensor.position.lng], {
+                    icon,
+                    draggable: false
+                }).addTo(this.map);
+                
+                // Popup de contrôle
+                marker.bindPopup(`
+                    <div style="text-align: center;">
+                        <b>Capteur: ${sensor.name || id}</b><br>
+                        <small>Type: ${sensor.type || 'IR'}</small><br>
+                        <small>État: ${sensor.status || 'actif'}</small><br>
+                        <div style="margin-top: 10px;">
+                            <button onclick="App.triggerSensor('${id}')" 
+                                style="background: #00ff00; color: #000; 
+                                       border: none; padding: 5px 10px; 
+                                       border-radius: 3px; cursor: pointer; 
+                                       margin: 2px;">
+                                🔔 Tester
+                            </button>
+                            <button onclick="App.removeSensor('${id}')" 
+                                style="background: #ff4444; color: white; 
+                                       border: none; padding: 5px 10px; 
+                                       border-radius: 3px; cursor: pointer; 
+                                       margin: 2px;">
+                                ❌ Retirer
+                            </button>
                         </div>
                     </div>
-                `;
+                `);
                 
-                const popup = L.popup({
-                    closeButton: true,
-                    autoClose: false,
-                    closeOnClick: false
-                })
-                .setLatLng(latlng)
-                .setContent(popupContent)
-                .openOn(this.map);
+                this.state.sensors[id].marker = marker;
+            },
+            
+            updateSensorMarker(id, sensor) {
+                const marker = this.state.sensors[id].marker;
+                if (!marker) return;
                 
-                // Attacher les événements aux boutons après l'ouverture du popup
-                setTimeout(() => {
-                    const deleteBtn = document.getElementById('deleteObstacleBtn');
-                    const cancelBtn = document.getElementById('cancelDeleteBtn');
+                const isTriggered = sensor.status === 'triggered' && 
+                                  Date.now() - sensor.timestamp < 30000;
+                
+                // Mettre à jour l'icône
+                const icon = L.divIcon({
+                    className: 'sensor-marker-div',
+                    html: `<div class="sensor-marker ${isTriggered ? 'triggered' : ''}">
+                               📡
+                           </div>
+                           <div style="background: rgba(0,0,0,0.8); color: #00ff00; 
+                                       padding: 2px 6px; border-radius: 4px; 
+                                       font-size: 10px; margin-top: 2px;">
+                               ${sensor.name || id}
+                           </div>`,
+                    iconSize: [30, 40],
+                    iconAnchor: [15, 20]
+                });
+                
+                marker.setIcon(icon);
+                
+                // Alerte si déclenché
+                if (isTriggered && !this.state.sensors[id].alerted) {
+                    this.state.sensors[id].alerted = true;
+                    this.notify(`⚠️ Capteur ${sensor.name || id} déclenché!`);
+                    if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
                     
-                    if (deleteBtn) {
-                        deleteBtn.onclick = () => {
-                            console.log('Suppression confirmée pour:', id);
-                            this.removeObstacle(id);
-                            this.map.closePopup();
-                        };
-                    }
+                    // Reset alerte après 30 sec
+                    setTimeout(() => {
+                        this.state.sensors[id].alerted = false;
+                    }, 30000);
+                }
+            },
+            
+            updateSensorPanel() {
+                const list = document.getElementById('sensorList');
+                if (!list) return;
+                
+                list.innerHTML = '';
+                
+                Object.keys(this.state.sensors).forEach(id => {
+                    const sensor = this.state.sensors[id].data;
+                    const isTriggered = sensor.status === 'triggered' && 
+                                      Date.now() - sensor.timestamp < 30000;
                     
-                    if (cancelBtn) {
-                        cancelBtn.onclick = () => {
-                            this.map.closePopup();
-                        };
+                    const item = document.createElement('div');
+                    item.className = `sensor-item ${isTriggered ? 'triggered' : ''}`;
+                    item.innerHTML = `
+                        <span>${sensor.name || id}</span>
+                        <span>${isTriggered ? '🚨' : '✅'}</span>
+                    `;
+                    
+                    item.onclick = () => {
+                        const marker = this.state.sensors[id].marker;
+                        if (marker) {
+                            this.map.setView(marker.getLatLng(), 18);
+                            marker.openPopup();
+                        }
+                    };
+                    
+                    list.appendChild(item);
+                });
+            },
+            
+            addNewSensor() {
+                this.map.getContainer().style.cursor = 'crosshair';
+                
+                // Attendre le prochain clic
+                const clickHandler = (e) => {
+                    this.map.off('click', clickHandler);
+                    this.map.getContainer().style.cursor = '';
+                    
+                    const name = prompt('Nom du capteur (ex: SENSOR_01):');
+                    if (!name) return;
+                    
+                    const sensorData = {
+                        name: name,
+                        type: 'IR',
+                        status: 'active',
+                        position: {
+                            lat: e.latlng.lat,
+                            lng: e.latlng.lng
+                        },
+                        timestamp: Date.now()
+                    };
+                    
+                    // Sauvegarder dans Firebase
+                    if (this.state.isConnected && this.firebase.db) {
+                        const sensorRef = ref(this.firebase.db, 
+                            `sensors/${this.state.teamCode}/${name}`);
+                        set(sensorRef, sensorData);
+                        this.notify('📡 Capteur ajouté');
                     }
-                }, 100);
+                };
+                
+                this.map.once('click', clickHandler);
+            },
+            
+            triggerSensor(id) {
+                if (this.state.isConnected && this.firebase.db) {
+                    const cmdRef = ref(this.firebase.db, 
+                        `sensors/${this.state.teamCode}/${id}/command`);
+                    set(cmdRef, 'test');
+                    this.notify('📡 Test envoyé');
+                }
+            },
+            
+            removeSensor(id) {
+                if (confirm('Supprimer ce capteur?')) {
+                    if (this.state.isConnected && this.firebase.db) {
+                        const sensorRef = ref(this.firebase.db, 
+                            `sensors/${this.state.teamCode}/${id}`);
+                        remove(sensorRef);
+                    }
+                    this.map.closePopup();
+                }
             },
 
             onMapClick(e) {
