@@ -599,6 +599,16 @@
                     onValue(this.firebase.refs.obstacles, (snap) => {
                         this.updateObstacles(snap.val());
                     }, { onlyOnce: true });
+                    
+                    // IMPORTANT: Vérifier aussi les capteurs
+                    if (this.firebase.refs.sensors) {
+                        console.log('Vérification des capteurs...');
+                        onValue(this.firebase.refs.sensors, (snap) => {
+                            const sensors = snap.val();
+                            console.log('Capteurs trouvés dans Firebase:', sensors);
+                            this.updateSensors(sensors);
+                        }, { onlyOnce: true });
+                    }
                 }, 1000);
                 
                 // Déconnexion auto
@@ -1472,15 +1482,30 @@
             },
             
             addNewSensor() {
-                this.map.getContainer().style.cursor = 'crosshair';
+                console.log('Ajout nouveau capteur - Mode placement activé');
                 
-                // Attendre le prochain clic
-                const clickHandler = (e) => {
-                    this.map.off('click', clickHandler);
+                // Désactiver les autres modes
+                if (this.state.enemyMode) this.toggleEnemyMode();
+                if (this.state.drawMode) this.toggleDrawMode();
+                if (this.state.editMode) this.toggleEditMode();
+                
+                this.map.getContainer().style.cursor = 'crosshair';
+                this.notify('📍 Cliquez sur la carte pour placer le capteur');
+                
+                // Variable pour stocker le handler temporaire
+                const placeSensorHandler = (e) => {
+                    console.log('Clic pour placement capteur à:', e.latlng);
+                    
+                    // Retirer le handler
+                    this.map.off('click', placeSensorHandler);
                     this.map.getContainer().style.cursor = '';
                     
-                    const name = prompt('Nom du capteur (ex: SENSOR_01):');
-                    if (!name) return;
+                    // Demander le nom du capteur
+                    const name = prompt('Nom du capteur (ex: SENSOR_01):', 'SENSOR_' + Date.now().toString().slice(-4));
+                    if (!name) {
+                        this.notify('Placement annulé');
+                        return;
+                    }
                     
                     const sensorData = {
                         name: name,
@@ -1490,19 +1515,43 @@
                             lat: e.latlng.lat,
                             lng: e.latlng.lng
                         },
-                        timestamp: Date.now()
+                        timestamp: Date.now(),
+                        placedBy: this.state.playerName,
+                        manual: true  // Indique placement manuel
                     };
+                    
+                    console.log('Création capteur:', sensorData);
                     
                     // Sauvegarder dans Firebase
                     if (this.state.isConnected && this.firebase.db) {
                         const sensorRef = ref(this.firebase.db, 
                             `sensors/${this.state.teamCode}/${name}`);
-                        set(sensorRef, sensorData);
-                        this.notify('📡 Capteur ajouté');
+                        set(sensorRef, sensorData).then(() => {
+                            console.log('Capteur sauvegardé dans Firebase');
+                            this.notify('📡 Capteur ajouté : ' + name);
+                        }).catch(err => {
+                            console.error('Erreur sauvegarde:', err);
+                            this.notify('❌ Erreur ajout capteur');
+                        });
+                    } else {
+                        // Mode hors ligne
+                        this.state.sensors[name] = { data: sensorData };
+                        this.createSensorMarker(name, sensorData);
+                        this.notify('📡 Capteur ajouté localement');
                     }
                 };
                 
-                this.map.once('click', clickHandler);
+                // Attacher le handler temporaire
+                this.map.once('click', placeSensorHandler);
+                
+                // Timeout pour annuler si pas de clic
+                setTimeout(() => {
+                    if (this.map.hasEventListeners('click', placeSensorHandler)) {
+                        this.map.off('click', placeSensorHandler);
+                        this.map.getContainer().style.cursor = '';
+                        this.notify('Placement annulé');
+                    }
+                }, 30000);  // 30 secondes
             },
             
             triggerSensor(id) {
@@ -1526,7 +1575,12 @@
             },
 
             onMapClick(e) {
-                console.log('Map click:', e.latlng, 'Enemy mode:', this.state.enemyMode, 'Edit mode:', this.state.editMode);
+                console.log('Map click:', e.latlng, 'Mode actuel:', {
+                    enemy: this.state.enemyMode,
+                    draw: this.state.drawMode,
+                    edit: this.state.editMode,
+                    sensor: this.state.sensorMode
+                });
                 
                 if (this.state.enemyMode) {
                     this.addEnemy(e.latlng);
@@ -2520,6 +2574,74 @@
             
             console.log('3. Pour activer le mode édition:');
             console.log('   App.toggleEditMode()');
+        };
+        
+        // Debug pour les capteurs
+        window.debugSensors = function() {
+            console.log('=== DIAGNOSTIC CAPTEURS ===');
+            
+            console.log('1. État local:');
+            console.log('   - Mode capteur actif:', App.state.sensorMode);
+            console.log('   - Capteurs en mémoire:', App.state.sensors);
+            console.log('   - Nombre de capteurs:', Object.keys(App.state.sensors).length);
+            
+            console.log('2. Détails des capteurs:');
+            Object.keys(App.state.sensors).forEach(id => {
+                const sensor = App.state.sensors[id];
+                console.log(`   ${id}:`, {
+                    data: sensor.data,
+                    marker: !!sensor.marker,
+                    position: sensor.data?.position
+                });
+            });
+            
+            console.log('3. Vérification Firebase:');
+            if (App.firebase.refs && App.firebase.refs.sensors) {
+                import('https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js').then(({ onValue }) => {
+                    onValue(App.firebase.refs.sensors, (snap) => {
+                        const data = snap.val();
+                        console.log('   Données Firebase brutes:', data);
+                        if (data) {
+                            Object.keys(data).forEach(id => {
+                                console.log(`   - ${id}:`, data[id]);
+                            });
+                        }
+                    }, { onlyOnce: true });
+                });
+            } else {
+                console.log('   ❌ Référence Firebase non initialisée');
+            }
+            
+            console.log('4. Pour forcer le rechargement:');
+            console.log('   App.updateSensors(null); // Effacer');
+            console.log('   // Puis recharger depuis Firebase');
+        };
+        
+        // Forcer le rechargement des capteurs
+        window.reloadSensors = function() {
+            console.log('Rechargement forcé des capteurs...');
+            
+            if (!App.firebase.refs || !App.firebase.refs.sensors) {
+                console.error('Firebase non prêt');
+                return;
+            }
+            
+            // Effacer les capteurs existants
+            Object.keys(App.state.sensors).forEach(id => {
+                if (App.state.sensors[id].marker) {
+                    App.map.removeLayer(App.state.sensors[id].marker);
+                }
+            });
+            App.state.sensors = {};
+            
+            // Recharger depuis Firebase
+            import('https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js').then(({ onValue }) => {
+                onValue(App.firebase.refs.sensors, (snap) => {
+                    const data = snap.val();
+                    console.log('Capteurs rechargés:', data);
+                    App.updateSensors(data);
+                }, { onlyOnce: true });
+            });
         };
         
         // Forcer une synchronisation manuelle
