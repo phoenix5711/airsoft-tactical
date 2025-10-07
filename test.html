@@ -3,14 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#1a1a1a">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <title>Airsoft Tactical Pro</title>
-    <link rel="manifest" href="/manifest.json">
+    <title>TEST - Airsoft Tactical</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: Arial, sans-serif; background: #000; color: #00ff00; overflow: hidden; }
+        body { font-family: Arial, sans-serif; background: #000; color: #00ff00; }
         
         .setup-screen {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -21,10 +18,9 @@
         .setup-box {
             background: #1a1a1a; padding: 30px; border-radius: 15px;
             border: 2px solid #00ff00; text-align: center; max-width: 90%;
-            box-shadow: 0 0 30px rgba(0, 255, 0, 0.5);
         }
         
-        .setup-box h1 { margin-bottom: 20px; font-size: 24px; }
+        .setup-box h1 { margin-bottom: 20px; color: #00ff00; }
         .setup-box input {
             width: 100%; padding: 12px; margin: 10px 0;
             background: #333; border: 2px solid #00ff00; color: #00ff00;
@@ -37,138 +33,67 @@
             font-weight: bold; font-size: 16px; margin-top: 15px;
         }
         
+        .hidden { display: none !important; }
+        
         #map { width: 100%; height: 100vh; }
         
-        .hud {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            pointer-events: none; z-index: 1000;
-        }
-        
         .status {
-            position: absolute; top: 10px; right: 10px;
-            background: rgba(0, 0, 0, 0.8); padding: 8px; border-radius: 6px;
-            border: 1px solid #00ff00; pointer-events: auto; font-size: 10px;
-            display: flex; gap: 10px;
+            position: fixed; top: 10px; right: 10px;
+            background: rgba(0, 0, 0, 0.9); padding: 10px; border-radius: 8px;
+            border: 1px solid #00ff00; z-index: 1000;
+            font-size: 12px;
         }
         
-        .layers {
-            position: absolute; top: 10px; left: 10px;
-            background: rgba(0, 0, 0, 0.8); border: 1px solid #00ff00;
-            border-radius: 6px; padding: 5px; pointer-events: auto;
-            display: flex; gap: 5px;
-        }
-        
-        .layer-btn {
-            padding: 5px 10px;
-            background: rgba(0, 0, 0, 0.8); border: 1px solid #00ff00;
-            color: #00ff00; border-radius: 4px; cursor: pointer; font-size: 10px;
-        }
-        
-        .layer-btn.active { background: rgba(0, 255, 0, 0.3); }
-        
-        .controls-bottom {
-            position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
-            display: flex; gap: 8px; pointer-events: auto;
-            background: rgba(0, 0, 0, 0.8); padding: 8px; border-radius: 20px;
-            border: 1px solid #00ff00;
-        }
-        
-        .zoom-controls {
-            position: absolute; bottom: 70px; right: 10px;
-            display: flex; flex-direction: column; gap: 5px;
-            pointer-events: auto;
-        }
-        
-        .zoom-btn {
-            width: 35px; height: 35px;
-            background: rgba(0, 0, 0, 0.9);
-            border: 1px solid #00ff00;
-            color: #00ff00;
-            border-radius: 50%;
-            cursor: pointer;
-            font-size: 18px;
-            font-weight: bold;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        
-        .zoom-btn:hover { 
-            background: rgba(0, 255, 0, 0.2); 
-        }
-        
-        .zoom-btn:active {
-            background: rgba(0, 255, 0, 0.4);
+        .controls {
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            display: flex; gap: 10px; z-index: 1000;
         }
         
         .btn {
-            padding: 8px 12px; background: rgba(0, 0, 0, 0.9);
-            border: 1px solid #00ff00; color: #00ff00; border-radius: 15px;
-            cursor: pointer; font-weight: bold; font-size: 10px;
+            padding: 10px 15px; background: rgba(0, 0, 0, 0.9);
+            border: 1px solid #00ff00; color: #00ff00; border-radius: 8px;
+            cursor: pointer; font-weight: bold;
         }
         
         .btn:hover { background: rgba(0, 255, 0, 0.2); }
-        .btn.active { background: rgba(255, 0, 0, 0.8); border-color: #ff0000; color: #fff; }
+        .btn.active { background: rgba(255, 0, 0, 0.8); color: #fff; }
         
-        .draw-panel {
-            position: absolute; bottom: 60px; left: 50%; transform: translateX(-50%);
-            background: rgba(0, 0, 0, 0.9); border: 1px solid #00ff00;
-            border-radius: 15px; padding: 8px; pointer-events: auto;
-            display: none;
+        .notification {
+            position: fixed; top: 60px; right: 10px; z-index: 2000;
+            background: rgba(0, 255, 0, 0.9); color: #000; padding: 10px 20px;
+            border-radius: 8px; font-weight: bold;
+            animation: slideIn 0.3s ease;
         }
         
-        .draw-panel.show { display: flex; gap: 5px; align-items: center; }
+        @keyframes slideIn {
+            from { transform: translateX(100%); }
+            to { transform: translateX(0); }
+        }
         
-        /* NOUVEAU: CSS pour le panneau des capteurs */
         .sensor-panel {
-            position: absolute;
-            bottom: 60px;
-            right: 10px;
-            background: rgba(0, 0, 0, 0.9);
-            border: 1px solid #00ff00;
-            border-radius: 10px;
-            padding: 10px;
-            pointer-events: auto;
-            display: none;
-            min-width: 200px;
-            max-height: 300px;
-            overflow-y: auto;
+            position: fixed; bottom: 80px; right: 10px;
+            background: rgba(0, 0, 0, 0.9); border: 1px solid #00ff00;
+            border-radius: 10px; padding: 15px; z-index: 1000;
+            display: none; min-width: 200px; max-height: 300px; overflow-y: auto;
         }
         
-        .sensor-panel.show {
-            display: block;
-        }
+        .sensor-panel.show { display: block; }
         
         .sensor-panel h3 {
-            color: #00ff00;
-            margin: 0 0 10px 0;
-            font-size: 14px;
-        }
-        
-        #sensorList {
-            margin: 10px 0;
+            color: #00ff00; margin: 0 0 10px 0; font-size: 14px;
         }
         
         .sensor-item {
-            background: rgba(0, 255, 0, 0.1);
-            border: 1px solid #00ff00;
-            border-radius: 5px;
-            padding: 8px;
-            margin: 5px 0;
-            cursor: pointer;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-size: 11px;
+            background: rgba(0, 255, 0, 0.1); border: 1px solid #00ff00;
+            border-radius: 5px; padding: 8px; margin: 5px 0;
+            cursor: pointer; display: flex; justify-content: space-between;
+            font-size: 12px;
         }
         
-        .sensor-item:hover {
-            background: rgba(0, 255, 0, 0.2);
-        }
+        .sensor-item:hover { background: rgba(0, 255, 0, 0.2); }
         
         .sensor-item.triggered {
-            background: rgba(255, 0, 0, 0.3);
-            border-color: #ff0000;
+            background: rgba(255, 0, 0, 0.3); border-color: #ff0000;
             animation: sensorAlert 1s infinite;
         }
         
@@ -177,277 +102,436 @@
             50% { opacity: 0.5; }
         }
         
-        /* Style pour les marqueurs de capteurs */
         .sensor-marker {
-            width: 30px;
-            height: 30px;
-            background: #00ff00;
-            border: 3px solid #fff;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 16px;
-            box-shadow: 0 0 15px rgba(0, 255, 0, 0.7);
+            width: 30px; height: 30px; background: #00ff00;
+            border: 3px solid #fff; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 16px; box-shadow: 0 0 15px rgba(0, 255, 0, 0.7);
         }
         
         .sensor-marker.triggered {
-            background: #ff0000;
-            animation: sensorPulse 1s infinite;
+            background: #ff0000; animation: sensorPulse 1s infinite;
         }
         
         @keyframes sensorPulse {
-            0%, 100% { transform: scale(1); box-shadow: 0 0 15px rgba(255, 0, 0, 0.7); }
-            50% { transform: scale(1.2); box-shadow: 0 0 25px rgba(255, 0, 0, 1); }
-        }
-        
-        .sensor-marker-div {
-            text-align: center;
-        }
-        
-        .obstacle-text-popup {
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: #1a1a1a;
-            border: 2px solid #00ff00;
-            border-radius: 10px;
-            padding: 20px;
-            z-index: 10000;
-            text-align: center;
-            box-shadow: 0 0 30px rgba(0, 255, 0, 0.7);
-        }
-        
-        .obstacle-text-popup h3 {
-            color: #00ff00;
-            margin: 0 0 15px 0;
-        }
-        
-        .obstacle-text-popup input {
-            width: 200px;
-            padding: 8px;
-            margin: 10px 0;
-            background: #333;
-            border: 1px solid #00ff00;
-            color: #00ff00;
-            border-radius: 5px;
-        }
-        
-        .obstacle-text-popup button {
-            padding: 8px 15px;
-            margin: 0 5px;
-            background: #00ff00;
-            color: #000;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            font-weight: bold;
-        }
-        
-        .obstacle-text-popup button.cancel {
-            background: #ff4444;
-            color: white;
-        }
-        
-        .obstacle-text-popup button:hover {
-            opacity: 0.8;
-        }
-        
-        .color-picker { display: flex; gap: 4px; margin: 0 5px; }
-        .color { 
-            width: 14px; height: 14px; border-radius: 50%;
-            border: 1px solid #fff; cursor: pointer;
-        }
-        .color.active { border-color: #00ff00; box-shadow: 0 0 8px currentColor; }
-        
-        .hidden { display: none !important; }
-        
-        .loading {
-            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            background: rgba(0, 0, 0, 0.9); padding: 20px; border-radius: 8px;
-            border: 2px solid #00ff00; z-index: 9999; text-align: center;
-        }
-        
-        .notification {
-            position: fixed; top: 60px; right: 10px; z-index: 2000;
-            background: rgba(0, 255, 0, 0.9); color: #000; padding: 8px 15px;
-            border-radius: 15px; font-weight: bold; font-size: 11px;
-            animation: slideIn 0.3s ease;
-        }
-        
-        .qr-modal {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0, 0, 0, 0.95); display: none; justify-content: center; align-items: center;
-            z-index: 15000;
-        }
-        
-        .qr-content {
-            background: #1a1a1a; padding: 30px; border-radius: 15px;
-            border: 2px solid #00ff00; text-align: center;
-            box-shadow: 0 0 30px rgba(0, 255, 0, 0.5);
-            max-width: 90%; width: 350px;
-        }
-        
-        .qr-content h3 { color: #00ff00; margin-bottom: 15px; }
-        
-        .qr-code-container {
-            background: white; padding: 20px; border-radius: 10px;
-            margin: 20px 0; display: inline-block;
-        }
-        
-        .team-code {
-            background: rgba(0, 255, 0, 0.2); padding: 10px;
-            border-radius: 8px; margin: 15px 0;
-            font-size: 18px; font-weight: bold; letter-spacing: 2px;
-        }
-        
-        .qr-content button {
-            padding: 10px 20px; background: #00ff00; color: #000;
-            border: none; border-radius: 8px; cursor: pointer;
-            font-weight: bold; margin: 5px;
-        }
-        
-        .close-btn { background: #ff4444 !important; color: white !important; }
-        
-        @keyframes slideIn {
-            from { transform: translateX(100%); opacity: 0; }
-            to { transform: translateX(0); opacity: 1; }
-        }
-        
-        @keyframes enemyPulse { 
-            0%, 100% { opacity: 1; transform: scale(1); } 
-            50% { opacity: 0.6; transform: scale(1.2); } 
-        }
-        
-        .enemy-marker-icon {
-            width: 30px; height: 30px;
-            background: radial-gradient(circle, #ff0000, #cc0000);
-            border: 3px solid #ffff00;
-            border-radius: 50%;
-            box-shadow: 0 0 20px #ff0000;
-            animation: enemyPulse 1s infinite;
-        }
-        
-        .obstacle-text-tooltip {
-            background: none !important;
-            border: none !important;
-            box-shadow: none !important;
-            padding: 0 !important;
-            z-index: 500 !important;
-        }
-        
-        .obstacle-text-tooltip div {
-            text-shadow: 2px 2px 4px rgba(0,0,0,1);
-            box-shadow: 0 0 15px rgba(0,0,0,0.8);
-        }
-        
-        .leaflet-pane.leaflet-enemyPane {
-            z-index: 650 !important;
-        }
-        
-        .leaflet-tooltip-pane {
-            z-index: 600 !important;
-        }
-        
-        .leaflet-overlay-pane {
-            z-index: 400 !important;
-        }
-        
-        .obstacle-editable {
-            cursor: pointer !important;
-        }
-        
-        .obstacle-popup {
-            z-index: 700 !important;
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.2); }
         }
     </style>
 </head>
 <body>
     <div class="setup-screen" id="setupScreen">
         <div class="setup-box">
-            <h1>🎯 AIRSOFT TACTICAL</h1>
-            <input type="text" id="teamCode" placeholder="Code équipe (ex: ALPHA)" maxlength="15">
-            <input type="text" id="playerName" placeholder="Votre indicatif (ex: LEADER)" maxlength="10">
-            <button onclick="App.start()">🚀 DÉMARRER MISSION</button>
+            <h1>🎯 TEST - AIRSOFT TACTICAL</h1>
+            <p style="color: #888; font-size: 12px; margin-bottom: 15px;">Version de test avec capteurs</p>
+            <input type="text" id="teamCode" placeholder="Code équipe (ex: A)" maxlength="15" value="A">
+            <input type="text" id="playerName" placeholder="Votre nom (ex: TEST)" maxlength="10" value="TEST">
+            <button onclick="startApp()">🚀 DÉMARRER TEST</button>
         </div>
-    </div>
-
-    <div class="loading hidden" id="loadingScreen">
-        <div>📡 Connexion...</div>
-        <div id="loadingStatus" style="font-size: 12px; margin-top: 10px;">Initialisation</div>
     </div>
 
     <div id="map" class="hidden"></div>
 
-    <div class="hud hidden" id="gameHUD">
-        <div class="status">
-            <div id="firebaseStatus">🔥OFF</div>
-            <div id="gpsStatus">📍OFF</div>
-            <div id="teamStatus">👥0</div>
-        </div>
-
-        <div class="layers">
-            <button class="layer-btn active" onclick="App.switchLayer('standard')">Standard</button>
-            <button class="layer-btn" onclick="App.switchLayer('satellite')">Satellite</button>
-            <button class="layer-btn" onclick="App.switchLayer('tactical')">Tactique</button>
-        </div>
-
-        <div class="zoom-controls">
-            <button class="zoom-btn" onclick="App.zoomIn()">+</button>
-            <button class="zoom-btn" onclick="App.zoomOut()">−</button>
-        </div>
-
-        <div class="controls-bottom">
-            <button class="btn" onclick="App.centerPlayer()">📍</button>
-            <button class="btn" onclick="App.recalibrateGPS()">🔄</button>
-            <button class="btn" id="enemyBtn" onclick="App.toggleEnemyMode()">🎯</button>
-            <button class="btn" id="drawBtn" onclick="App.toggleDrawMode()">✏️</button>
-            <button class="btn" id="editBtn" onclick="App.toggleEditMode()">🗑️</button>
-            <button class="btn" id="sensorBtn" onclick="App.toggleSensorMode()">📡</button>
-            <button class="btn" onclick="App.showQRCode()">📲</button>
-        </div>
-
-        <div class="draw-panel" id="drawPanel">
-            <button class="btn active" onclick="App.setDrawTool('rectangle')">▭</button>
-            <button class="btn" onclick="App.setDrawTool('circle')">○</button>
-            <button class="btn" onclick="App.setDrawTool('polygon')">⬟</button>
-            <button class="btn" onclick="App.setDrawTool('line')">╱</button>
-            <div class="color-picker">
-                <div class="color active" style="background: #ff4444;" onclick="App.setDrawColor('#ff4444', event)"></div>
-                <div class="color" style="background: #ffaa00;" onclick="App.setDrawColor('#ffaa00', event)"></div>
-                <div class="color" style="background: #00ff00;" onclick="App.setDrawColor('#00ff00', event)"></div>
-                <div class="color" style="background: #0080ff;" onclick="App.setDrawColor('#0080ff', event)"></div>
-            </div>
-        </div>
-        
-        <!-- NOUVEAU: Panneau des capteurs -->
-        <div class="sensor-panel" id="sensorPanel">
-            <h3>📡 CAPTEURS</h3>
-            <div id="sensorList"></div>
-            <button class="btn" onclick="App.addNewSensor()" style="width: 100%; margin-top: 10px;">
-                ➕ Ajouter capteur
-            </button>
-        </div>
+    <div class="status hidden" id="gameStatus">
+        <div id="firebaseStatus">🔥 OFF</div>
+        <div id="gpsStatus">📍 OFF</div>
+        <div id="teamInfo">Équipe: -</div>
     </div>
 
-    <div class="qr-modal" id="qrModal">
-        <div class="qr-content">
-            <h3>📡 PARTAGER L'ÉQUIPE</h3>
-            <div class="team-code">CODE: <span id="qrTeamCode"></span></div>
-            <div class="qr-code-container">
-                <img id="qrcode" alt="QR Code" style="width: 200px; height: 200px;">
-            </div>
-            <button onclick="App.copyTeamLink()">📋 Copier le lien</button>
-            <button id="installBtn" onclick="App.installPWA()" style="display: none;">📥 Installer l'app</button>
-            <button class="close-btn" onclick="App.closeModal()">Fermer</button>
-            <div style="margin-top: 15px;">
-                <a href="#" onclick="App.changeTeam()" style="color: #888; font-size: 11px; text-decoration: underline;">Changer d'équipe</a>
-            </div>
-        </div>
+    <div class="controls hidden" id="gameControls">
+        <button class="btn" onclick="centerMap()">📍 Centrer</button>
+        <button class="btn" id="sensorBtn" onclick="toggleSensorMode()">📡 Capteurs</button>
+        <button class="btn" onclick="testSensor()">🔔 Test</button>
+        <button class="btn" onclick="showDebug()">🐛 Debug</button>
+    </div>
+
+    <div class="sensor-panel" id="sensorPanel">
+        <h3>📡 CAPTEURS</h3>
+        <div id="sensorList">Chargement...</div>
+        <button class="btn" onclick="addSensor()" style="width: 100%; margin-top: 10px;">
+            ➕ Ajouter capteur
+        </button>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script type="module" src="app.js"></script>
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+        import { getDatabase, ref, set, onValue, remove } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js';
+
+        // Configuration Firebase
+        const firebaseConfig = {
+            apiKey: "OninF0hGCgA3fJ600rPOWgo8qrBr222ijsprPfWT",
+            authDomain: "airsoft-tactical.firebaseapp.com",
+            databaseURL: "https://airsoft-tactical-default-rtdb.europe-west1.firebasedatabase.app",
+            projectId: "airsoft-tactical",
+            storageBucket: "airsoft-tactical.appspot.com",
+            messagingSenderId: "Admin01",
+            appId: "001"
+        };
+
+        // État global
+        window.appState = {
+            map: null,
+            firebase: null,
+            db: null,
+            teamCode: null,
+            playerName: null,
+            position: { lat: 48.8566, lng: 2.3522 },
+            sensors: {},
+            sensorMode: false,
+            isConnected: false
+        };
+
+        // Démarrage de l'application
+        window.startApp = function() {
+            const teamCode = document.getElementById('teamCode').value.trim().toUpperCase();
+            const playerName = document.getElementById('playerName').value.trim().toUpperCase();
+
+            if (!teamCode || !playerName) {
+                alert('Remplissez tous les champs !');
+                return;
+            }
+
+            console.log('🚀 Démarrage avec:', { teamCode, playerName });
+
+            window.appState.teamCode = teamCode;
+            window.appState.playerName = playerName;
+
+            // Masquer setup
+            document.getElementById('setupScreen').classList.add('hidden');
+            
+            // Afficher carte et contrôles
+            document.getElementById('map').classList.remove('hidden');
+            document.getElementById('gameStatus').classList.remove('hidden');
+            document.getElementById('gameControls').classList.remove('hidden');
+
+            // Mise à jour info équipe
+            document.getElementById('teamInfo').textContent = `Équipe: ${teamCode} - ${playerName}`;
+
+            // Initialiser Firebase
+            initFirebase();
+
+            // Initialiser la carte
+            initMap();
+
+            notify('✅ Application démarrée !');
+        };
+
+        function initFirebase() {
+            console.log('🔥 Initialisation Firebase...');
+            
+            try {
+                window.appState.firebase = initializeApp(firebaseConfig);
+                window.appState.db = getDatabase(window.appState.firebase);
+                
+                // Vérifier connexion
+                const connRef = ref(window.appState.db, '.info/connected');
+                onValue(connRef, (snap) => {
+                    window.appState.isConnected = snap.val() === true;
+                    document.getElementById('firebaseStatus').textContent = 
+                        window.appState.isConnected ? '🔥 ON' : '🔥 OFF';
+                    
+                    if (window.appState.isConnected) {
+                        console.log('✅ Firebase connecté !');
+                        setupSensorListener();
+                    }
+                });
+            } catch (error) {
+                console.error('❌ Erreur Firebase:', error);
+                notify('❌ Erreur Firebase');
+            }
+        }
+
+        function setupSensorListener() {
+            if (!window.appState.db || !window.appState.teamCode) return;
+
+            console.log('👂 Écoute des capteurs pour:', window.appState.teamCode);
+            
+            const sensorsRef = ref(window.appState.db, `sensors/${window.appState.teamCode}`);
+            
+            onValue(sensorsRef, (snapshot) => {
+                const data = snapshot.val();
+                console.log('📡 Capteurs reçus:', data);
+                updateSensors(data);
+            });
+        }
+
+        function initMap() {
+            console.log('🗺️ Initialisation carte...');
+            
+            window.appState.map = L.map('map', {
+                center: [window.appState.position.lat, window.appState.position.lng],
+                zoom: 15,
+                zoomControl: false
+            });
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19
+            }).addTo(window.appState.map);
+
+            // Marqueur joueur
+            L.marker([window.appState.position.lat, window.appState.position.lng])
+                .addTo(window.appState.map)
+                .bindPopup('👤 Vous êtes ici');
+
+            document.getElementById('gpsStatus').textContent = '📍 OK';
+            
+            notify('🗺️ Carte chargée !');
+        }
+
+        function updateSensors(data) {
+            console.log('🔄 Mise à jour capteurs');
+            
+            const list = document.getElementById('sensorList');
+            
+            // Effacer les anciens marqueurs
+            Object.keys(window.appState.sensors).forEach(id => {
+                if (!data || !data[id]) {
+                    if (window.appState.sensors[id].marker) {
+                        window.appState.map.removeLayer(window.appState.sensors[id].marker);
+                    }
+                    delete window.appState.sensors[id];
+                }
+            });
+
+            if (!data) {
+                list.innerHTML = '<div style="color: #888; font-size: 11px;">Aucun capteur</div>';
+                return;
+            }
+
+            list.innerHTML = '';
+            let count = 0;
+
+            Object.keys(data).forEach(id => {
+                const sensor = data[id];
+                
+                // Vérifier position
+                if (!sensor.position || !sensor.position.lat || !sensor.position.lng) {
+                    console.log(`⚠️ Capteur ${id} sans position`);
+                    return;
+                }
+
+                count++;
+
+                // Créer ou mettre à jour
+                if (!window.appState.sensors[id]) {
+                    createSensorMarker(id, sensor);
+                } else {
+                    updateSensorMarker(id, sensor);
+                }
+
+                // Ajouter à la liste
+                const item = document.createElement('div');
+                item.className = 'sensor-item';
+                if (sensor.status === 'triggered') {
+                    item.classList.add('triggered');
+                }
+                item.innerHTML = `
+                    <span>${sensor.name || id}</span>
+                    <span>${sensor.status === 'triggered' ? '🚨' : '✅'}</span>
+                `;
+                item.onclick = () => {
+                    if (window.appState.sensors[id] && window.appState.sensors[id].marker) {
+                        const marker = window.appState.sensors[id].marker;
+                        window.appState.map.setView(marker.getLatLng(), 18);
+                        marker.openPopup();
+                    }
+                };
+                list.appendChild(item);
+            });
+
+            console.log(`✅ ${count} capteurs affichés`);
+            
+            if (count === 0) {
+                list.innerHTML = '<div style="color: #888; font-size: 11px;">Aucun capteur avec position</div>';
+            }
+        }
+
+        function createSensorMarker(id, sensor) {
+            console.log('➕ Création marqueur:', id, sensor.position);
+
+            const isTriggered = sensor.status === 'triggered';
+            
+            const icon = L.divIcon({
+                className: 'sensor-marker-div',
+                html: `<div class="sensor-marker ${isTriggered ? 'triggered' : ''}">📡</div>
+                       <div style="background: rgba(0,0,0,0.8); color: ${isTriggered ? '#ff0000' : '#00ff00'}; 
+                                   padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold;">
+                           ${sensor.name || id}
+                       </div>`,
+                iconSize: [40, 50],
+                iconAnchor: [20, 25]
+            });
+
+            const marker = L.marker([sensor.position.lat, sensor.position.lng], { icon })
+                .addTo(window.appState.map);
+
+            marker.bindPopup(`
+                <div style="text-align: center;">
+                    <b>📡 ${sensor.name || id}</b><br>
+                    <small>État: ${isTriggered ? '🚨 DÉCLENCHÉ' : '✅ Actif'}</small><br>
+                    ${sensor.placedBy ? `<small>Par: ${sensor.placedBy}</small><br>` : ''}
+                    <button onclick="testSensorById('${id}')" style="margin: 5px; padding: 5px 10px; background: #00ff00; border: none; border-radius: 3px; cursor: pointer;">
+                        🔔 Tester
+                    </button>
+                    <button onclick="removeSensorById('${id}')" style="margin: 5px; padding: 5px 10px; background: #ff4444; color: white; border: none; border-radius: 3px; cursor: pointer;">
+                        ❌ Retirer
+                    </button>
+                </div>
+            `);
+
+            window.appState.sensors[id] = { data: sensor, marker: marker };
+        }
+
+        function updateSensorMarker(id, sensor) {
+            const marker = window.appState.sensors[id].marker;
+            if (!marker) return;
+
+            const isTriggered = sensor.status === 'triggered';
+            
+            const icon = L.divIcon({
+                className: 'sensor-marker-div',
+                html: `<div class="sensor-marker ${isTriggered ? 'triggered' : ''}">📡</div>
+                       <div style="background: rgba(0,0,0,0.8); color: ${isTriggered ? '#ff0000' : '#00ff00'}; 
+                                   padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold;">
+                           ${sensor.name || id}
+                       </div>`,
+                iconSize: [40, 50],
+                iconAnchor: [20, 25]
+            });
+
+            marker.setIcon(icon);
+            window.appState.sensors[id].data = sensor;
+
+            if (isTriggered && !window.appState.sensors[id].alerted) {
+                window.appState.sensors[id].alerted = true;
+                notify(`🚨 ${sensor.name || id} déclenché !`);
+                setTimeout(() => {
+                    if (window.appState.sensors[id]) {
+                        window.appState.sensors[id].alerted = false;
+                    }
+                }, 30000);
+            }
+        }
+
+        window.toggleSensorMode = function() {
+            window.appState.sensorMode = !window.appState.sensorMode;
+            const btn = document.getElementById('sensorBtn');
+            const panel = document.getElementById('sensorPanel');
+            
+            if (window.appState.sensorMode) {
+                btn.classList.add('active');
+                panel.classList.add('show');
+                notify('📡 Panneau capteurs ouvert');
+            } else {
+                btn.classList.remove('active');
+                panel.classList.remove('show');
+            }
+        };
+
+        window.addSensor = function() {
+            const panel = document.getElementById('sensorPanel');
+            panel.classList.remove('show');
+            
+            window.appState.map.getContainer().style.cursor = 'crosshair';
+            notify('📍 Cliquez pour placer le capteur');
+
+            const handler = (e) => {
+                window.appState.map.off('click', handler);
+                window.appState.map.getContainer().style.cursor = '';
+
+                const name = prompt('Nom du capteur:', 'SENSOR_' + Date.now().toString().slice(-4));
+                if (!name) {
+                    notify('Placement annulé');
+                    return;
+                }
+
+                const sensorData = {
+                    name: name,
+                    type: 'IR',
+                    status: 'active',
+                    position: { lat: e.latlng.lat, lng: e.latlng.lng },
+                    timestamp: Date.now(),
+                    placedBy: window.appState.playerName,
+                    manual: true
+                };
+
+                if (window.appState.db) {
+                    const sensorRef = ref(window.appState.db, 
+                        `sensors/${window.appState.teamCode}/${name}`);
+                    set(sensorRef, sensorData).then(() => {
+                        console.log('✅ Capteur sauvegardé');
+                        notify('📡 Capteur ' + name + ' ajouté');
+                        panel.classList.add('show');
+                    }).catch(err => {
+                        console.error('❌ Erreur:', err);
+                        notify('❌ Erreur ajout');
+                    });
+                }
+            };
+
+            window.appState.map.once('click', handler);
+        };
+
+        window.testSensorById = function(id) {
+            console.log('🔔 Test capteur:', id);
+            if (window.appState.db) {
+                const cmdRef = ref(window.appState.db, 
+                    `sensors/${window.appState.teamCode}/${id}/command`);
+                set(cmdRef, 'test');
+                notify('🔔 Test envoyé');
+            }
+        };
+
+        window.removeSensorById = function(id) {
+            if (!confirm(`Supprimer ${id} ?`)) return;
+            
+            if (window.appState.db) {
+                const sensorRef = ref(window.appState.db, 
+                    `sensors/${window.appState.teamCode}/${id}`);
+                remove(sensorRef);
+                notify('✅ Capteur supprimé');
+            }
+        };
+
+        window.testSensor = function() {
+            notify('🔔 Test de tous les capteurs...');
+            Object.keys(window.appState.sensors).forEach(id => {
+                testSensorById(id);
+            });
+        };
+
+        window.centerMap = function() {
+            if (window.appState.map) {
+                window.appState.map.setView(
+                    [window.appState.position.lat, window.appState.position.lng], 
+                    15
+                );
+                notify('📍 Carte centrée');
+            }
+        };
+
+        window.showDebug = function() {
+            console.log('=== DEBUG STATE ===');
+            console.log('Team:', window.appState.teamCode);
+            console.log('Player:', window.appState.playerName);
+            console.log('Connected:', window.appState.isConnected);
+            console.log('Sensors:', window.appState.sensors);
+            console.log('Map:', window.appState.map);
+            
+            alert(`DEBUG\n\nÉquipe: ${window.appState.teamCode}\nJoueur: ${window.appState.playerName}\nConnexion: ${window.appState.isConnected ? 'OK' : 'OFF'}\nCapteurs: ${Object.keys(window.appState.sensors).length}\n\nVoir console (F12) pour détails`);
+        };
+
+        function notify(message) {
+            console.log('📢', message);
+            const notif = document.createElement('div');
+            notif.className = 'notification';
+            notif.textContent = message;
+            document.body.appendChild(notif);
+            setTimeout(() => notif.remove(), 3000);
+        }
+
+        console.log('✅ Script chargé - Prêt à démarrer');
+    </script>
 </body>
 </html>
