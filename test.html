@@ -833,10 +833,30 @@
                         return;
                     }
                     
+                    // Détecter changement de status
+                    const wasTriggered = this.state.sensors[id] && this.state.sensors[id].triggeredAt;
+                    const isNowTriggered = sensor.status === 'triggered';
+                    
                     if (!this.state.sensors[id]) {
-                        this.state.sensors[id] = { data: sensor };
+                        this.state.sensors[id] = { 
+                            data: sensor,
+                            triggeredAt: isNowTriggered ? Date.now() : null
+                        };
                         this.createSensorMarker(id, sensor);
                     } else {
+                        // Si passage à triggered, stocker le timestamp local
+                        if (isNowTriggered && !wasTriggered) {
+                            this.state.sensors[id].triggeredAt = Date.now();
+                            console.log(`🚨 Capteur ${id} vient de se déclencher!`);
+                            
+                            // CRÉER UN MARQUEUR ENNEMI à la position du capteur
+                            this.createEnemyFromSensor(id, sensor);
+                        }
+                        // Si plus triggered, reset
+                        if (!isNowTriggered && wasTriggered) {
+                            this.state.sensors[id].triggeredAt = null;
+                        }
+                        
                         this.state.sensors[id].data = sensor;
                         this.updateSensorMarker(id, sensor);
                     }
@@ -848,8 +868,9 @@
             createSensorMarker(id, sensor) {
                 if (!sensor.position) return;
                 
-                const isTriggered = sensor.status === 'triggered' && 
-                                  Date.now() - sensor.timestamp < 30000;
+                // Vérifier si triggered en utilisant le timestamp LOCAL
+                const triggeredAt = this.state.sensors[id].triggeredAt;
+                const isTriggered = triggeredAt && (Date.now() - triggeredAt < 30000);
                 
                 const icon = L.divIcon({
                     className: 'sensor-marker-div',
@@ -898,14 +919,19 @@
                 `);
                 
                 this.state.sensors[id].marker = marker;
+                
+                console.log(`Capteur ${id} créé à [${sensor.position.lat}, ${sensor.position.lng}]`);
             },
 
             updateSensorMarker(id, sensor) {
                 const marker = this.state.sensors[id].marker;
                 if (!marker) return;
                 
-                const isTriggered = sensor.status === 'triggered' && 
-                                  Date.now() - sensor.timestamp < 30000;
+                // Vérifier si triggered en utilisant le timestamp LOCAL
+                const triggeredAt = this.state.sensors[id].triggeredAt;
+                const isTriggered = triggeredAt && (Date.now() - triggeredAt < 30000);
+                
+                console.log(`Capteur ${id}: triggered=${isTriggered}, status=${sensor.status}, triggeredAt=${triggeredAt}`);
                 
                 const icon = L.divIcon({
                     className: 'sensor-marker-div',
@@ -923,6 +949,7 @@
                 
                 marker.setIcon(icon);
                 
+                // Notification si première détection
                 if (isTriggered && !this.state.sensors[id].alerted) {
                     this.state.sensors[id].alerted = true;
                     this.notify(`🚨 Capteur ${sensor.name || id} déclenché!`);
@@ -930,9 +957,13 @@
                     
                     marker.openPopup();
                     
+                    // Reset après 30 secondes
                     setTimeout(() => {
                         if (this.state.sensors[id]) {
                             this.state.sensors[id].alerted = false;
+                            this.state.sensors[id].triggeredAt = null;
+                            // Forcer mise à jour visuelle
+                            this.updateSensorMarker(id, sensor);
                         }
                     }, 30000);
                 }
@@ -951,8 +982,8 @@
                 
                 Object.keys(this.state.sensors).forEach(id => {
                     const sensor = this.state.sensors[id].data;
-                    const isTriggered = sensor.status === 'triggered' && 
-                                      Date.now() - sensor.timestamp < 30000;
+                    const triggeredAt = this.state.sensors[id].triggeredAt;
+                    const isTriggered = triggeredAt && (Date.now() - triggeredAt < 30000);
                     
                     const item = document.createElement('div');
                     item.className = `sensor-item ${isTriggered ? 'triggered' : ''}`;
